@@ -1,0 +1,31 @@
+# Store text with LF, and let each platform choose what it checks out.
+* text=auto
+
+# Unity writes its YAML with LF on every platform. Keeping it LF on checkout
+# stops a save from flipping line endings. "text=auto" still leaves any binary
+# .asset alone.
+*.unity        text=auto eol=lf
+*.prefab       text=auto eol=lf
+*.asset        text=auto eol=lf
+*.mat          text=auto eol=lf
+*.meta         text=auto eol=lf
+*.anim         text=auto eol=lf
+*.controller   text=auto eol=lf
+*.physicMaterial text=auto eol=lf
+*.inputactions text=auto eol=lf
+*.shadergraph  text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.tga binary
+*.exr binary
+*.psd binary
+*.ttf binary
+*.otf binary
+*.fbx binary
+*.wav binary
+*.mp3 binary
+
+# Keep imported and generated files out of GitHub's language stats and diffs.
+Assets/TextMesh[[:space:]]Pro/** linguist-vendored
+BalanceResults/*.json linguist-generated

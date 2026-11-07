@@ -1,0 +1,144 @@
+{
+    "trials": [
+        {
+            "name": "quiet",
+            "wholeBody": false,
+            "passed": true,
+            "minimumHeight": 0.9969327449798584,
+            "finalSpeed": 0.005648451391607523,
+            "peakHipTarget": 0.0,
+            "peakArmTarget": 0.0,
+            "peakTrunkAngle": 2.8083982467651367
+        },
+        {
+            "name": "forward impulse 10 Ns",
+            "wholeBody": false,
+            "passed": true,
+            "minimumHeight": 0.9969327449798584,
+            "finalSpeed": 0.0056373123079538345,
+            "peakHipTarget": 0.0,
+            "peakArmTarget": 0.0,
+            "peakTrunkAngle": 4.76082181930542
+        },
+        {
+            "name": "backward impulse 10 Ns",
+            "wholeBody": false,
+            "passed": true,
+            "minimumHeight": 0.9969327449798584,
+            "finalSpeed": 0.005655278451740742,
+            "peakHipTarget": 0.0,
+            "peakArmTarget": 0.0,
+            "peakTrunkAngle": 3.0350587368011475
+        },
+        {
+            "name": "side impulse 10 Ns",
+            "wholeBody": false,
+            "passed": true,
+            "minimumHeight": 0.9969327449798584,
+            "finalSpeed": 0.005692244973033667,
+            "peakHipTarget": 0.0,
+            "peakArmTarget": 0.0,
+            "peakTrunkAngle": 2.8083982467651367
+        },
+        {
+            "name": "forward force 15 N",
+            "wholeBody": false,
+            "passed": true,
+            "minimumHeight": 0.9969327449798584,
+            "finalSpeed": 0.005949911195784807,
+            "peakHipTarget": 0.0,
+            "peakArmTarget": 0.0,
+            "peakTrunkAngle": 5.7754998207092285
+        },
+        {
+            "name": "ground roll 3 degrees",
+            "wholeBody": false,
+            "passed": true,
+            "minimumHeight": 0.9969327449798584,
+            "finalSpeed": 0.00988683756440878,
+            "peakHipTarget": 0.0,
+            "peakArmTarget": 0.0,
+            "peakTrunkAngle": 4.5278778076171875
+        },
+        {
+            "name": "forward impulse 25 Ns",
+            "wholeBody": false,
+            "passed": false,
+            "minimumHeight": 0.1128150075674057,
+            "finalSpeed": 0.0042435526847839355,
+            "peakHipTarget": 0.0,
+            "peakArmTarget": 0.0,
+            "peakTrunkAngle": 92.56061553955078
+        },
+        {
+            "name": "quiet",
+            "wholeBody": true,
+            "passed": true,
+            "minimumHeight": 0.997048020362854,
+            "finalSpeed": 0.006193002685904503,
+            "peakHipTarget": 2.061356782913208,
+            "peakArmTarget": 3.0459258556365967,
+            "peakTrunkAngle": 3.5676567554473877
+        },
+        {
+            "name": "forward impulse 10 Ns",
+            "wholeBody": true,
+            "passed": true,
+            "minimumHeight": 0.997048020362854,
+            "finalSpeed": 0.006192340515553951,
+            "peakHipTarget": 2.061356782913208,
+            "peakArmTarget": 3.0459258556365967,
+            "peakTrunkAngle": 3.5676567554473877
+        },
+        {
+            "name": "backward impulse 10 Ns",
+            "wholeBody": true,
+            "passed": true,
+            "minimumHeight": 0.997048020362854,
+            "finalSpeed": 0.006193609442561865,
+            "peakHipTarget": 2.061356782913208,
+            "peakArmTarget": 3.0459258556365967,
+            "peakTrunkAngle": 3.5901968479156494
+        },
+        {
+            "name": "side impulse 10 Ns",
+            "wholeBody": true,
+            "passed": true,
+            "minimumHeight": 0.997048020362854,
+            "finalSpeed": 0.006192049477249384,
+            "peakHipTarget": 2.061356782913208,
+            "peakArmTarget": 3.0459258556365967,
+            "peakTrunkAngle": 3.5676567554473877
+        },
+        {
+            "name": "forward force 15 N",
+            "wholeBody": true,
+            "passed": true,
+            "minimumHeight": 0.997048020362854,
+            "finalSpeed": 0.00619549723342061,
+            "peakHipTarget": 2.061356782913208,
+            "peakArmTarget": 3.0459258556365967,
+            "peakTrunkAngle": 3.5676567554473877
+        },
+        {
+            "name": "ground roll 3 degrees",
+            "wholeBody": true,
+            "passed": true,
+            "minimumHeight": 0.997048020362854,
+            "finalSpeed": 0.00913747027516365,
+            "peakHipTarget": 2.061356782913208,
+            "peakArmTarget": 3.0459258556365967,
+            "peakTrunkAngle": 3.5676567554473877
+        },
+        {
+            "name": "forward impulse 25 Ns",
+            "wholeBody": true,
+            "passed": true,
+            "minimumHeight": 0.9895814657211304,
+            "finalSpeed": 0.006194692570716143,
+            "peakHipTarget": 6.594116687774658,
+            "peakArmTarget": 9.853317260742188,
+            "peakTrunkAngle": 10.210298538208008
+        }
+    ]
+}
