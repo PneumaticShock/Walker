@@ -59,3 +59,25 @@ Known limits:
 - Self-collision is off, so the legs can pass through each other on a crossing step.
 
 Saved scene values override defaults in code, so a changed default has no effect until the scene is updated too. `FootworkTrial`, `FootworkSearch` and `RecoveryStepBench` are optional development fixtures, not attached to the saved scene.
+
+## Why bursts sometimes end in a fall
+
+Investigated 2026-11-07, after three falls from front-right in six runs looked like a weak direction. It is not one. With `RunNamed("label","burst 6 from")` and `repeats` of 24, 181 of 192 runs passed, 5 fell and 6 had not settled, so about 2.6% fall. Front-right passed 22/24 with 2 falls, front-left 21/24 with 1, and the other directions 22 to 24 with at most 1 each.
+
+Falls end the same way. In the four measured, one step lets the pelvis drop by at least 0.13 m, the next foot lands on a knee bent about 80 to 100 degrees, and that leg folds. What starts the drop varies: a stance foot carrying almost no load, one placed too far from the body, or one sliding. Feet crossing during the hold is not the general cause: it came before only one of five falls traced, and runs that crossed also recovered.
+
+Tried and rejected, and not kept in the code: before lifting a foot, wait up to 0.3 s until the other foot carries 100 N and the pelvis is above 0.86 m, unless the capture point is at least 0.12 m outside the feet. A low pelvis does predict a fall: 9 of 24 steps started below 0.90 m were followed by one within 1.2 s, against 5 of 602 otherwise. But preventing those lifts did not help, so it looks like a symptom rather than the cause.
+
+| Runs that passed | Saved settings | With the wait |
+|---|---|---|
+| 6 balls, 8 directions, 24 runs each (the set it was picked on) | 181/192 | 188/192 |
+| Full bench, 3 runs per case | 571/627 | 569/627 |
+
+On the full bench, 17 runs improved and 19 got worse.
+
+When measuring something this rare:
+
+- **Three runs per case cannot resolve it.** At 2.6%, no falls in 24 runs happens about half the time.
+- **A rerun is close to a replay.** 92 of 96 runs matched when the same set ran twice, so it is not a second sample. More `repeats` gives new start times instead.
+- **Case order matters.** Front-right's second and third runs fell when the case ran after the front case, and passed when it ran alone.
+- **Judge a change on the full bench,** not on the cases it was picked on.
