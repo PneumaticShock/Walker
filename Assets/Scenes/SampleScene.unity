@@ -5037,6 +5037,9 @@ MonoBehaviour:
   closingShift: 0.5
   closeSpread: 0.1
   liftMargin: -0.03
+  pathClearance: 0.03
+  stepDownLead: 0.7
+  roughClearance: 0.13
   phase: 0
   state: Standing
   steppingFoot: -1

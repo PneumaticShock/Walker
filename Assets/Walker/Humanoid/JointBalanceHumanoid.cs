@@ -19,6 +19,21 @@ public class JointBalanceHumanoid : MonoBehaviour
     public Vector3 capturePoint, angularMomentum;
     public float balanceDemand, hipTargetDegrees, armTargetDegrees;
     public string balanceState;
+    [Header("Feet")]
+    [Tooltip("Split each foot in two at Awake, with a joint between a rear part, which stays the foot the controller works with, and a front part.")]
+    public bool splitFeet;
+    [Tooltip("Where the split is, as a fraction of the foot's length from the heel. About 0.72 is the ball of the foot (the metatarsophalangeal joints); about 0.4 is the midfoot.")]
+    [Range(.3f,.9f)] public float splitAt = .72f;
+    [Tooltip("How far the front part can bend up (dorsiflexion) and down (plantarflexion), in degrees. Human first MTP joint: about 76 up and 34 down.")]
+    public float frontUp = 76, frontDown = 34;
+    [Tooltip("The spring holding the front part in line (N m per radian). Toe muscles are weak.")]
+    public float frontStiffness = 30;
+    [Tooltip("Height of the hinge above the sole (m).")]
+    public float frontHinge = .03f;
+    [Tooltip("Mass of the front part (kg). The rear part keeps the whole foot's mass and inertia: the ankle's drive was tuned on them, and on a light link a stiff drive's real stiffness is set by its inertia.")]
+    public float frontMass = .15f;
+    // The front parts once split, otherwise null. They are appended to `bodies`, so existing indices stay put.
+    [System.NonSerialized] public Rigidbody[] fronts;
     Quaternion heading;
     Vector3 filteredVelocity, bodyCorrection, armCorrection;
     HumanoidFootwork footwork;
@@ -31,6 +46,7 @@ public class JointBalanceHumanoid : MonoBehaviour
         heading = transform.rotation;
         footwork=GetComponent<HumanoidFootwork>();
         if (bodies == null) return;
+        if (splitFeet) SplitFeet();
         standing = System.Array.ConvertAll(motors, joint => joint.slerpDrive);
         // Standing itself fails at the Unity default of 0.02 s: the humanoid falls without being touched.
         if (Time.fixedDeltaTime > .0101f) Debug.LogWarning("JointBalanceHumanoid is only validated at a 0.01 s fixed timestep, and cannot stand at 0.02 s. Current: " + Time.fixedDeltaTime + " s. Set it in Project Settings > Time.", this);
@@ -186,6 +202,69 @@ public class JointBalanceHumanoid : MonoBehaviour
         motors[motor].slerpDrive=drive;
     }
     void RestoreDrive(int motor) => SetDrive(motor,standing[motor].positionSpring,standing[motor].positionDamper,standing[motor].maximumForce);
+
+    // Cut each foot box at `splitAt` and hinge the front part to the rear one across the foot. The rear part
+    // keeps the foot's body and transform, so everything that works from the foot's position is unchanged.
+    void SplitFeet()
+    {
+        fronts = new Rigidbody[2];
+        var all = new System.Collections.Generic.List<Rigidbody>(bodies);
+        for (int i = 0; i < 2; i++)
+        {
+            var foot = feet[i];
+            var box = foot.GetComponent<BoxCollider>();
+            Vector3 size = box.size, centre = box.center;
+            float heel = centre.z - size.z * .5f, cut = heel + size.z * splitAt;
+            float rearLength = cut - heel, frontLength = size.z - rearLength;
+            float mass = foot.mass;
+            Vector3 inertia = foot.inertiaTensor, centreOfMass = foot.centerOfMass;
+            Quaternion inertiaRotation = foot.inertiaTensorRotation;
+            box.size = new Vector3(size.x, size.y, rearLength);
+            box.center = new Vector3(centre.x, centre.y, heel + rearLength * .5f);
+            var visual = foot.transform.Find("Visual");
+            if (visual) { visual.localScale = box.size; visual.localPosition = box.center; }
+            foot.mass = mass; foot.centerOfMass = centreOfMass;
+            foot.inertiaTensor = inertia; foot.inertiaTensorRotation = inertiaRotation;
+
+            var go = new GameObject(foot.name + " Front") { layer = foot.gameObject.layer };
+            go.transform.SetParent(foot.transform.parent, false);
+            go.transform.SetPositionAndRotation(foot.transform.TransformPoint(new Vector3(centre.x, centre.y, cut + frontLength * .5f)), foot.rotation);
+            var frontBox = go.AddComponent<BoxCollider>();
+            frontBox.size = new Vector3(size.x, size.y, frontLength);
+            frontBox.sharedMaterial = box.sharedMaterial;
+            var look = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            look.name = "Visual"; Destroy(look.GetComponent<Collider>());
+            look.transform.SetParent(go.transform, false); look.transform.localScale = frontBox.size;
+            if (visual) look.GetComponent<Renderer>().sharedMaterial = visual.GetComponent<Renderer>().sharedMaterial;
+            var body = go.AddComponent<Rigidbody>();
+            body.mass = frontMass;
+            body.interpolation = foot.interpolation; body.collisionDetectionMode = foot.collisionDetectionMode;
+            body.linearDamping = 0; body.angularDamping = 0;
+
+            // A hinge across the foot, a little above the sole like the metatarsal heads.
+            Vector3 hinge = foot.transform.TransformPoint(new Vector3(centre.x, centre.y - size.y * .5f + frontHinge, cut));
+            FrontHinge(go, foot, hinge, frontUp, frontDown, frontStiffness);
+            fronts[i] = body; all.Add(body);
+        }
+        bodies = all.ToArray();
+    }
+
+    // The hinge between a foot's rear and front parts, about the rear part's own x axis (across the foot).
+    // A negative angle lifts the front end (HingeTest checks the limits act on the right sides).
+    public static HingeJoint FrontHinge(GameObject front, Rigidbody rear, Vector3 hingeWorld, float up, float down, float stiffness)
+    {
+        var joint = front.AddComponent<HingeJoint>();
+        joint.connectedBody = rear;
+        joint.autoConfigureConnectedAnchor = false;
+        joint.anchor = front.transform.InverseTransformPoint(hingeWorld);
+        joint.connectedAnchor = rear.transform.InverseTransformPoint(hingeWorld);
+        joint.axis = Vector3.right;
+        joint.useLimits = true;
+        joint.limits = new JointLimits { min = -up, max = down };
+        joint.useSpring = true;
+        joint.spring = new JointSpring { spring = stiffness, damper = stiffness * .05f, targetPosition = 0 };
+        return joint;
+    }
 
     // Test reset clears controller memory; it does not move or apply forces to any body.
     public void ResetFeedback()

@@ -170,6 +170,13 @@ public class HumanoidFootwork : MonoBehaviour
     [Range(0,.2f)] public float closeSpread = .1f;
     [Tooltip("Lift the closing foot once the capture point is this far inside the stay foot's support (negative) or outside it (positive).")]
     [Range(-.08f,.15f)] public float liftMargin = -.03f;
+    [Header("Uneven ground")]
+    [Tooltip("Lift the swing foot this far over higher ground ahead of it (m). 0 turns this off.")]
+    [Range(0,.15f)] public float pathClearance = .03f;
+    [Tooltip("Over this fraction of the swing, bring the pelvis to where the leg can reach a lower landing. 0 turns this off.")]
+    [Range(0,1)] public float stepDownLead = .7f;
+    [Tooltip("Swing clearance used instead of stepClearance where the ground is uneven: a step between the feet, a tilted slab, or a step under the stance foot. 0 turns this off.")]
+    [Range(0,.25f)] public float roughClearance = .13f;
     [Header("Diagnostics")]
     public Phase phase;
     public string state = "Standing";
@@ -207,14 +214,30 @@ public class HumanoidFootwork : MonoBehaviour
         for(int i=0;i<2;i++)
         {
             sensors[i]=h.feet[i].gameObject.AddComponent<FootContactSensor>();
+            // A split foot's front part is a body of its own, with its own contacts. It is part of the same foot.
+            if(h.fronts!=null) frontSensors[i]=h.fronts[i].gameObject.AddComponent<FootContactSensor>();
             shinBodies[i]=h.feet[i].GetComponent<ConfigurableJoint>().connectedBody;
             thighBodies[i]=shinBodies[i].GetComponent<ConfigurableJoint>().connectedBody;
         }
     }
-    public bool Contact(int foot) => sensors[foot] && sensors[foot].touching;
-    public float Load(int foot) => sensors[foot] ? sensors[foot].load : 0;
-    public Vector3 Pressure(int foot) => sensors[foot] ? sensors[foot].pressure : Vector3.zero;
+    readonly FootContactSensor[] frontSensors = new FootContactSensor[2];
+    public bool Contact(int foot) => sensors[foot] && sensors[foot].touching || frontSensors[foot] && frontSensors[foot].touching;
+    public float Load(int foot) => (sensors[foot] ? sensors[foot].load : 0)+(frontSensors[foot] ? frontSensors[foot].load : 0);
+    public Vector3 Pressure(int foot)
+    {
+        if(!sensors[foot]) return Vector3.zero;
+        var front=frontSensors[foot];
+        if(!front || front.load<=0) return sensors[foot].pressure;
+        float rear=sensors[foot].load;
+        return rear<=0?front.pressure:(sensors[foot].pressure*rear+front.pressure*front.load)/(rear+front.load);
+    }
     public Vector3 Target(int foot) => targets[foot];
+    public float GroundUnder(int foot) => ground[foot];
+    public float SwingProgress => IsSwinging?Mathf.Clamp01(timer/stepTime):0;
+    // How far apart the highest and lowest ground under the footprint are: large when it straddles a step.
+    public float FootSpread(int foot) => footSpread[foot];
+    float lastSpread;
+    readonly float[] footSpread = new float[2];
     public float PelvisCommand => pelvisHeight;
     public bool IsSwinging => phase==Phase.Swing && steppingFoot>=0;
     // In single support the leg on the ground holds the pelvis level from its hip, rather than
@@ -253,14 +276,16 @@ public class HumanoidFootwork : MonoBehaviour
     public float LegPush(int leg) => phase==Phase.Stand?1:Mathf.Clamp01((smoothLoad[leg]-pushLoad)/Mathf.Max(1,plantLoad-pushLoad));
     bool Ground(Vector3 p, Quaternion heading, out float y, out Vector3 n)
     {
-        y=float.NegativeInfinity; n=Vector3.zero; int count=0;
+        y=float.NegativeInfinity; n=Vector3.zero; int count=0; float low=float.PositiveInfinity;
         // Sample the footprint, not just the centre: a heel or toe can straddle a slab edge.
         for(int i=0;i<5;i++)
         {
             Vector3 offset=i==0?Vector3.zero:new Vector3((i==1||i==2?-.055f:.055f),0,(i%2==0?.105f:-.105f));
             if(Physics.Raycast(p+heading*offset+Vector3.up*.45f,Vector3.down,out var hit,1.1f,1,QueryTriggerInteraction.Ignore) && hit.normal.y>.45f)
-            { y=Mathf.Max(y,hit.point.y); n+=hit.normal; count++; }
+            { y=Mathf.Max(y,hit.point.y); low=Mathf.Min(low,hit.point.y); n+=hit.normal; count++; }
         }
+        // A ray down the gap between two slabs reaches the floor far below: that is not a step under the foot.
+        lastSpread=count==0 || y-low>.28f?0:y-low;
         if(count==0) { y=p.y-.06f; n=Vector3.up; return false; }
         n.Normalize(); return true;
     }
@@ -372,6 +397,19 @@ public class HumanoidFootwork : MonoBehaviour
     bool CapturedBy(JointBalanceHumanoid h, Quaternion heading, int stance) =>
         SupportDistance(h,capture,heading,stance==0,stance==1)<capturedMargin;
 
+    // The highest ground under a footprint, out to its corners.
+    bool HighestUnder(Vector3 p, Quaternion heading, out float top)
+    {
+        top=float.NegativeInfinity;
+        for(int i=0;i<5;i++)
+        {
+            Vector3 offset=i==0?Vector3.zero:new Vector3(i==1||i==2?-.085f:.085f,0,i%2==0?.155f:-.155f);
+            if(Physics.Raycast(p+heading*offset+Vector3.up*.45f,Vector3.down,out var hit,1.1f,1,QueryTriggerInteraction.Ignore) && hit.normal.y>.45f)
+                top=Mathf.Max(top,hit.point.y);
+        }
+        return !float.IsNegativeInfinity(top);
+    }
+
     // Accept the plan if there is ground there; otherwise shorten the step until there is.
     bool FindFoothold(Vector3 goal, Quaternion heading, int stance, out Vector3 foothold)
     {
@@ -439,6 +477,7 @@ public class HumanoidFootwork : MonoBehaviour
         {
             targets[i]=h.feet[i].position;
             valid &= Ground(targets[i],heading,out ground[i],out normals[i]);
+            footSpread[i]=lastSpread;
             targets[i].y=ground[i]+FootRestHeight;
             // Contact impulses swing wildly from tick to tick, and ankle torque set from them feeds back.
             smoothLoad[i]=Mathf.Lerp(smoothLoad[i],Mathf.Min(Load(i),Physics.gravity.magnitude*totalMass*1.5f),1-Mathf.Exp(-dt/loadFilter));
@@ -602,7 +641,20 @@ public class HumanoidFootwork : MonoBehaviour
             // Clear the ground first, then travel.
             float travel=Mathf.SmoothStep(0,1,Mathf.Clamp01((progress-.08f)/.92f));
             Vector3 p=Vector3.Lerp(swingStart,landingTarget,travel);
-            p.y=Mathf.Lerp(startHeight,landingTarget.y,travel)+stepClearance*Mathf.Sin(Mathf.PI*Mathf.Pow(progress,swingShape));
+            // Level ground keeps the clearance it was tuned with; uneven ground gets more.
+            bool uneven=Mathf.Abs(landingTarget.y-startHeight)>.01f || Vector3.Angle(normals[stance],Vector3.up)>1 || footSpread[stance]>.01f;
+            float clearance=roughClearance>0 && uneven?roughClearance:stepClearance;
+            p.y=Mathf.Lerp(startHeight,landingTarget.y,travel)+clearance*Mathf.Sin(Mathf.PI*Mathf.Pow(progress,swingShape));
+            if(pathClearance>0 && progress<.85f)
+            {
+                // A straight line to the landing can run into a raised slab on the way there.
+                float ahead=float.NegativeInfinity;
+                for(int s=0;s<=3;s++)
+                    if(HighestUnder(Vector3.Lerp(p,landingTarget,s/3f),heading,out float pathTop)) ahead=Mathf.Max(ahead,pathTop);
+                float line=Mathf.Lerp(startHeight,landingTarget.y,travel);
+                if(ahead+FootRestHeight>line+.005f)
+                    p.y=Mathf.Max(p.y,Mathf.Lerp(p.y,ahead+FootRestHeight+pathClearance,Mathf.Clamp01((.85f-progress)/.15f)));
+            }
             // Touchdown comes from contact, not the clock: past the end of the
             // trajectory, keep reaching down until the sole actually lands.
             if(timer>duration) p.y-=Mathf.Min(.10f,(timer-duration)*.7f);
@@ -672,12 +724,26 @@ public class HumanoidFootwork : MonoBehaviour
             // away from the foot, instead of the body sinking on an arc and loading a bent knee.
             Vector3 stanceAnkle=targets[stance]+soles[stance]*AnkleFromFoot;
             Vector3 stanceHip=ActualHip(h,stance);
-            float above=ground[stance]+stanceHeight-HipDrop-stanceAnkle.y;
+            float wantPelvis=ground[stance]+stanceHeight;
+            bool lowering=false;
+            if(stepDownLead>0)
+            {
+                // Going down a step, the leg can only reach once the body has come down with it. Going
+                // up, there is nothing to gain from a stance knee that is not as straight as it goes.
+                Vector3 landingAnkle=landingTarget+soles[swing]*AnkleFromFoot;
+                float landingAcross=Vector3.ProjectOnPlane(landingAnkle-ActualHip(h,swing),Vector3.up).magnitude;
+                float touching=landingAnkle.y+Mathf.Sqrt(Mathf.Max(.09f,ReachLeg*ReachLeg-landingAcross*landingAcross))+HipDrop;
+                float landingGround=landingTarget.y-FootRestHeight;
+                // Only for a landing that really is lower: on level ground a long step reaches as it always has.
+                if(landingGround<ground[stance]-.01f && touching<wantPelvis) { wantPelvis=Mathf.Lerp(wantPelvis,touching,Mathf.Clamp01(SwingProgress/stepDownLead)); lowering=true; }
+                else if(landingGround>ground[stance]+.01f) wantPelvis=Mathf.Max(wantPelvis,landingGround+stanceHeight);
+            }
+            float above=wantPelvis-HipDrop-stanceAnkle.y;
             float span=Mathf.Sqrt(above*above+Vector3.ProjectOnPlane(stanceAnkle-stanceHip,Vector3.up).sqrMagnitude);
             float kneeForHeight=2*Mathf.Acos(Mathf.Clamp(span/.8f,0,1))*Mathf.Rad2Deg;
             // Falling behind the foot, the ground force passes behind the knee and a bent knee folds.
             bool behind=Vector3.Dot(capture-stanceAnkle,forward)<0;
-            HoldKnee(stance,behind?stanceKnee:Mathf.Clamp(kneeForHeight,stanceKnee,70),heading,dt);
+            HoldKnee(stance,behind && !lowering?stanceKnee:Mathf.Clamp(kneeForHeight,stanceKnee,70),heading,dt);
             float bend=SolveLeg(swing,ActualHip(h,swing),targets[swing]+soles[swing]*AnkleFromFoot,forward,MinSwingLeg);
             leftKneeDegrees=swing==0?bend:kneeTargets[stance]; rightKneeDegrees=swing==1?bend:kneeTargets[stance];
             pelvisHeight=h.pelvis.position.y;

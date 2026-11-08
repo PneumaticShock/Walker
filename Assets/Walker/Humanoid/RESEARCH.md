@@ -30,6 +30,11 @@ These were learned on this rig rather than from the papers, each from a measured
 - Two stiff legs on the ground fight. Load jumps between the feet regardless of what balance needs, and a foot with little load slides. Three things fixed it: load sharing by leg length, dropping any press towards the other foot, and having a lightly loaded leg work from where the pelvis really is, with a fixed place for its foot (`LegPush`, `plantLoad`).
 - A foot off the ground needs a fixed reference. The standing pose takes each leg's angle from where its foot is, which for a foot in the air is a runaway. Switching modes on load alone is a limit cycle that walks the foot across the floor, so it also checks the foot's height (`hangHeight`).
 - Handing back to standing must not relax the legs' lean quickly, or carry over the ankle's torque target. Both throw the body.
+- On uneven ground the knee is the limit. A step up lands on a bent knee, and the swing leg's reaction as the other foot lifts loads it with up to 1.7 times body weight. Falling backward, a stance knee past about 55 degrees then folds instead of straightening. On level ground the knee rarely gets there.
+- A foot across a step between slabs rests on the edge and pivots on it, where the ankle has no leverage. The support model still assumes the whole sole.
+- Clearance and pelvis height planned for the ground actually there help on uneven ground (`roughClearance`, `pathClearance`, `stepDownLead`). Moving the landing to better ground, waiting before a lift, and pressing the toe did not. See `Platform/ARENA.md`.
+- Unity reports a contact's impulse one way round or the other depending on the order of the two bodies in the pair, so a contact sensor has to take the size of the vertical impulse, not just the upward part. It only showed up with bodies made at Play time (the split feet).
+- The ankle's tuning depends on the foot's mass and inertia, not only its drive: changing the foot body changes how stiff the ankle really is.
 
 Tried and not useful here: more solver iterations, the Temporal Gauss-Seidel solver, more foot friction, and limiting the swing hip's torque.
 
