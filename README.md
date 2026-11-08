@@ -39,6 +39,7 @@ A few settings matter if you change things:
 - **Fixed timestep:** this must be 0.01 s, as saved in `ProjectSettings/TimeManager.asset`. At Unity's default of 0.02 s the humanoid falls while standing untouched.
 - **Torque limits:** the knee is limited to 280 N·m and the hip to 300 N·m. Set them with `Maximum Force` on the Slerp Drive of the Shin and Thigh joints.
 - **Scene values:** values saved in the scene override the defaults in code, so a changed default has no effect until the scene is updated too.
+- **Split feet:** `splitFeet` on the humanoid hinges each foot at the ball, with a human toe joint's range. It is off: it neither helped nor hurt measurably. See [ARENA.md](Assets/Walker/Platform/ARENA.md).
 
 ## Project layout
 
@@ -68,14 +69,32 @@ Measured on 2026-11-07 with `RecoveryStepBench`, three runs per case, on flat gr
 | Two pushes 3 s apart | 11/12 |
 | 6-ball bursts with no reset, 6 s apart | 7/9 |
 | 6-ball bursts with no reset, 3 s apart | 5/9 |
-| Moving floor, 10 cm and 7 degrees (the scene's setting) | 41/51 |
+| Moving floor: pushes and one or two balls | 41/51 |
 
 Pushes at the pelvis hold up to 70 N·s forward, and up to 60 N·s backward and sideways, which is the most the bench tries in those directions.
+
+### Moving floor
+
+The scene's floor moves each slab up to 10 cm and tilts it up to 7 degrees, out of step with its neighbours, so most steps land on a different slab across a stair. Between neighbours front to back, the step is over 7 cm about half the time and reaches 22 cm. This is much harder than flat ground, and the humanoid often falls.
+
+| Moving floor, 8 directions, repeats not used for tuning | Passed | Fell |
+|---|---|---|
+| 1 ball (3 runs per direction) | 24/24 | 0 |
+| 2 balls (12 runs per direction) | 74/96 | 16 |
+| 3 balls | 52/96 | 35 |
+| 4 balls | 44/96 | 35 |
+| 5 balls | 38/96 | 52 |
+| 6 balls (24 runs per direction) | 77/192 | 104 |
+| 6 balls, mixed directions (3 runs per case) | 12/12 | 0 |
+| No balls, one foot where four slabs meet (3 runs per case) | 22/36 | 13 |
+| Same, with the floor still | 36/36 | 0 |
+
+Each repeat starts about 0.4 s later than the last, so the runs meet the slabs across their whole cycle. Three settings for uneven ground (`roughClearance`, `pathClearance`, `stepDownLead`) cut the 6-ball falls from 137 to 104 and leave level ground unchanged. [ARENA.md](Assets/Walker/Platform/ARENA.md) has what goes wrong on this floor, the before-and-after numbers, and what was tried and rejected.
 
 Known limits:
 
 - Burst after burst with no reset is less reliable than a single burst.
-- The moving floor is the weakest case. A foot landing across a slab edge or on a tilted slab is a common cause of failure.
+- The moving floor is by far the weakest case. From three balls in one direction, about half the runs or more fail. See [ARENA.md](Assets/Walker/Platform/ARENA.md) for why.
 - Outcomes near the limit are chaotic, so a single run says little. Run the bench with `repeats` of at least 2 after any tuning.
 - The camera doesn't follow, so a long run of bursts can walk the humanoid out of frame and eventually off the floor.
 - Self-collision is off, so the legs can pass through each other on a crossing step.

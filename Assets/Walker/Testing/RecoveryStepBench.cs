@@ -31,6 +31,9 @@ public class RecoveryStepBench : MonoBehaviour
         public int march=-1;         // test a step taken from rest onto this foot
         public Vector3[] series;     // bursts of `projectiles` balls, one from each of these, `seriesGap` apart
         public float seriesGap=6;
+        public int repeatTicks=7;    // how much later each repeat starts
+        public int cornerFoot=-1;    // start with this foot where four slabs meet, at `corner`
+        public Vector3 corner;
     }
     [System.Serializable] public class Row
     {
@@ -110,6 +113,27 @@ public class RecoveryStepBench : MonoBehaviour
             cases.Add(new Case{name="again 4 from "+first.name+" then 4 from "+side.name,projectiles=4,from=new[]{first.dir},spacing=.1f,secondBalls=4,secondFrom=new[]{side.dir},afterLanding=1,seconds=12});
             cases.Add(new Case{name="again push from "+first.name+" then from "+side.name,impulse=-first.dir*40,second=-side.dir*40,afterLanding=1,seconds=12});
         }
+        // The same balls on the moving floor at full height and tilt. Each repeat starts about 0.4 s later,
+        // so that together they meet the slabs across their whole cycle, and the steps between them.
+        const int Sweep=37;
+        foreach(var side in Sides) for(int n=1;n<=6;n++) cases.Add(new Case{name="moving ground "+n+" balls from "+side.name,projectiles=n,from=new[]{side.dir},spacing=.1f,terrain=true,settle=8,repeatTicks=Sweep});
+        cases.Add(new Case{name="moving ground 6 balls mixed around",projectiles=6,from=new[]{Dir(0,1),Dir(1,0),Dir(0,-1),Dir(-1,0),Dir(1,1),Dir(-1,-1)},spacing=.1f,terrain=true,settle=8,repeatTicks=Sweep});
+        cases.Add(new Case{name="moving ground 6 balls mixed front-back",projectiles=6,from=new[]{Dir(0,1),Dir(0,-1)},spacing=.1f,terrain=true,settle=8,repeatTicks=Sweep});
+        cases.Add(new Case{name="moving ground 6 balls mixed left-right",projectiles=6,from=new[]{Dir(1,0),Dir(-1,0)},spacing=.1f,terrain=true,settle=8,repeatTicks=Sweep});
+        cases.Add(new Case{name="moving ground 6 balls mixed scattered",projectiles=6,from=new[]{Dir(1,1),Dir(-1,0),Dir(0,-1),Dir(1,-1),Dir(-1,1),Dir(1,0)},spacing=.1f,terrain=true,settle=8,repeatTicks=Sweep});
+        foreach(var first in new[]{Sides[0],Sides[2],Sides[4],Sides[6]}) foreach(var side in Sides)
+            cases.Add(new Case{name="moving ground again 4 from "+first.name+" then 4 from "+side.name,projectiles=4,from=new[]{first.dir},spacing=.1f,secondBalls=4,secondFrom=new[]{side.dir},afterLanding=1,seconds=12,terrain=true,settle=8,repeatTicks=Sweep});
+        // No balls: one foot starts where four slabs meet. Moving slabs for nearly five of their cycles, and
+        // still ones, which leaves only the geometry: the gaps between the slabs, and no step between them.
+        foreach(var at in new[]{new Vector3(0,0,.4f),new Vector3(0,0,-.4f),new Vector3(.8f,0,.4f),new Vector3(-.8f,0,.4f),new Vector3(.8f,0,-.4f),new Vector3(-.8f,0,-.4f)})
+            for(int foot=0;foot<2;foot++)
+            {
+                string where=(foot==0?"left":"right")+" foot x"+at.x.ToString("0.0",CultureInfo.InvariantCulture)+" z"+at.z.ToString("0.0",CultureInfo.InvariantCulture);
+                cases.Add(new Case{name="corner moving "+where,cornerFoot=foot,corner=at,terrain=true,settle=1,seconds=40});
+                cases.Add(new Case{name="corner still "+where,cornerFoot=foot,corner=at,settle=1,seconds=20});
+            }
+        cases.Add(new Case{name="corner moving control",terrain=true,settle=1,seconds=40});
+        cases.Add(new Case{name="corner still control",settle=1,seconds=20});
         return cases;
     }
     static Vector3 Dir(float x,float z) => new Vector3(x,0,z).normalized;
@@ -147,7 +171,7 @@ public class RecoveryStepBench : MonoBehaviour
         total*=repeats;
         foreach(var c in cases) for(int r=0;r<repeats;r++)
         {
-            yield return RunCase(c,trace,r);
+            yield return RunCase(c,trace,firstRepeat+r*stride);
             completed++;
             string path="BalanceResults/recovery-"+label+".json";
             report.total=report.rows.Count; report.passed=report.rows.FindAll(r=>r.recovered).Count;
@@ -214,14 +238,24 @@ public class RecoveryStepBench : MonoBehaviour
     // Physics here is chaotic: one run says little, so `repeats` runs each case several times,
     // starting the disturbance a few ticks later each time.
     public int repeats=1;
+    // Which repeats to run: firstRepeat, then every stride after it. A setting tuned on some repeats
+    // can then be checked on others it has never seen.
+    public int firstRepeat=0, stride=1;
     IEnumerator RunCase(Case c,bool trace,int repeat=0)
     {
         var a=GetComponent<BalanceTestArena>(); var h=a.humanoid; var f=h.GetComponent<HumanoidFootwork>();
         a.automaticFire=false; a.shiftingGround=c.terrain; f.recoverySteps=c.steps; a.ResetTrial(); f.holdOnly=false;
+        if(c.cornerFoot>=0)
+        {
+            // The floor is level at the start of a trial, so the whole body can just be moved across.
+            Vector3 move=c.corner-h.feet[c.cornerFoot].position; move.y=0;
+            foreach(var body in h.bodies) body.position+=move;
+            Physics.SyncTransforms();
+        }
         var row=new Row{name=c.name};
-        var log=trace?new StringBuilder("t,state,foot,comX,comZ,comY,cpX,cpZ,pelvisY,lX,lY,lZ,rX,rY,rZ,goalX,goalZ,supX,supZ,margin,trunk,pelvisPitch,lPitch,rPitch,lK,rK,lLoad,rLoad,lTY,lTZ,rTY,rTZ,lTX,rTX,pCmd,lKa,rKa,pelX,pelZ,rThC,rThA,rShC,rShA,rFoC,rFoA,rHipT,rKneeT,thighW,lRoll,rRoll,lAnkP,lAnkR,rAnkP,rAnkR,comVX,comVZ,lCopX,lCopZ,rCopX,rCopZ,lKneeZ,rKneeZ,lKneeY,rKneeY,pelRoll,trunkRoll,lThRoll,rThRoll,lShRoll,rShRoll,trunkPitch,lHipY,rHipY\n"):null;
+        var log=trace?new StringBuilder("t,state,foot,comX,comZ,comY,cpX,cpZ,pelvisY,lX,lY,lZ,rX,rY,rZ,goalX,goalZ,supX,supZ,margin,trunk,pelvisPitch,lPitch,rPitch,lK,rK,lLoad,rLoad,lTY,lTZ,rTY,rTZ,lTX,rTX,pCmd,lKa,rKa,pelX,pelZ,rThC,rThA,rShC,rShA,rFoC,rFoA,rHipT,rKneeT,thighW,lRoll,rRoll,lAnkP,lAnkR,rAnkP,rAnkR,comVX,comVZ,lCopX,lCopZ,rCopX,rCopZ,lKneeZ,rKneeZ,lKneeY,rKneeY,pelRoll,trunkRoll,lThRoll,rThRoll,lShRoll,rShRoll,trunkPitch,lHipY,rHipY,lG,rG,lSpread,rSpread,goalY,lContact,rContact,progress\n"):null;
         float dt=Time.fixedDeltaTime;
-        int settle=Mathf.RoundToInt(c.settle/dt)+repeat*7, ticks=Mathf.RoundToInt(c.seconds/dt);
+        int settle=Mathf.RoundToInt(c.settle/dt)+repeat*c.repeatTicks, ticks=Mathf.RoundToInt(c.seconds/dt);
         Vector3 startL=h.feet[0].position, startR=h.feet[1].position;
         float shot=c.projectiles>0?settle:-1; int fired=0;
         // Second disturbance: at a fixed time, or a set time after the first step lands. If no
@@ -284,7 +318,8 @@ public class RecoveryStepBench : MonoBehaviour
                     F(PitchOf(f.thighs[1])),F(Pitch(h.bodies[8])),F(PitchOf(f.shins[1])),F(Pitch(h.bodies[9])),F(PitchOf(h.motors[7].targetRotation)),F(Pitch(h.feet[1])),
                     F(h.motors[7].currentTorque.magnitude),F(h.motors[8].currentTorque.magnitude),F(h.bodies[8].angularVelocity.x),
                     F(Roll(h.feet[0])),F(Roll(h.feet[1])),"0","0","0","0",F(h.centerOfMassVelocity.x),F(h.centerOfMassVelocity.z),
-                    F(f.Pressure(0).x),F(f.Pressure(0).z),F(f.Pressure(1).x),F(f.Pressure(1).z),F(Knee(h,3).z),F(Knee(h,8).z),F(Knee(h,3).y),F(Knee(h,8).y),F(Roll(h.pelvis)),F(Roll(h.bodies[1])),F(Roll(h.bodies[3])),F(Roll(h.bodies[8])),F(Roll(h.bodies[4])),F(Roll(h.bodies[9])),F(Pitch(h.bodies[1])),F((h.pelvis.position+h.pelvis.rotation*new Vector3(-.14f,-.07f,0)).y),F((h.pelvis.position+h.pelvis.rotation*new Vector3(.14f,-.07f,0)).y)));
+                    F(f.Pressure(0).x),F(f.Pressure(0).z),F(f.Pressure(1).x),F(f.Pressure(1).z),F(Knee(h,3).z),F(Knee(h,8).z),F(Knee(h,3).y),F(Knee(h,8).y),F(Roll(h.pelvis)),F(Roll(h.bodies[1])),F(Roll(h.bodies[3])),F(Roll(h.bodies[8])),F(Roll(h.bodies[4])),F(Roll(h.bodies[9])),F(Pitch(h.bodies[1])),F((h.pelvis.position+h.pelvis.rotation*new Vector3(-.14f,-.07f,0)).y),F((h.pelvis.position+h.pelvis.rotation*new Vector3(.14f,-.07f,0)).y),
+                    F(f.GroundUnder(0)),F(f.GroundUnder(1)),F(f.FootSpread(0)),F(f.FootSpread(1)),F(f.landingTarget.y),f.Contact(0)?"1":"0",f.Contact(1)?"1":"0",F(f.SwingProgress)));
             }
         }
         row.hits=a.impacts; row.impulse=a.totalImpactImpulse; row.normalAtEnd=f.NormalStance; row.underfoot=a.ballsUnderfoot;
