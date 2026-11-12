@@ -164,5 +164,6 @@ Known limits:
 
 ## More detail
 
+- [AGENTS.md](AGENTS.md): rules and workflow for coding agents (Claude Code reads it through CLAUDE.md), and the headless bench: `powershell -File Tools/bench.ps1 -Filter "walk 0.5 level|getup squat" -Repeats 2` with the editor closed.
 - [ARENA.md](Assets/Walker/Platform/ARENA.md): arena settings, how to run the bench, and full results, including a comparison with a 240 N·m hip.
 - [RESEARCH.md](Assets/Walker/Humanoid/RESEARCH.md): the papers behind the controller, and what was learned on this rig.
