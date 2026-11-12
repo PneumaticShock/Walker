@@ -22,11 +22,14 @@ public class FootContactSensor : MonoBehaviour
         if(c.rigidbody && !c.rigidbody.isKinematic) return;
         int tick=Mathf.RoundToInt(Time.fixedTime/Time.fixedDeltaTime);
         if(tick!=stamp) { collected=0; weightSum=0; weighted=Vector3.zero; stamp=tick; }
-        collected+=Mathf.Max(0,c.impulse.y)/Time.fixedDeltaTime;
+        // Which way round Unity reports the impulse depends on the order of the two bodies in the contact pair,
+        // which is not always the same (it differs for a body created at runtime). Support from the ground
+        // is always upward on the foot, so its size is what counts.
+        collected+=Mathf.Abs(c.impulse.y)/Time.fixedDeltaTime;
         int n=c.GetContacts(points);
         for(int i=0;i<n;i++)
         {
-            float w=Mathf.Max(0,points[i].impulse.y);
+            float w=Mathf.Abs(points[i].impulse.y);
             weighted+=points[i].point*w; weightSum+=w;
         }
         seen=tick;

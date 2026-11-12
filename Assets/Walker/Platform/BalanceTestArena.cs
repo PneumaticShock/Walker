@@ -22,6 +22,11 @@ public class BalanceTestArena : MonoBehaviour
     [Range(0,.15f)] public float heightAmplitude = .025f;
     [Range(0,10)] public float tiltDegrees = 2f;
     [Range(.02f,.5f)] public float frequency = .12f;
+    [Header("Still rough floor")]
+    [Tooltip("On a trial reset, hold the slabs still at the heights and tilts the moving floor has at this time (s), with roughHeight and roughTilt in place of its amplitude and tilt. Negative leaves the floor level. The two slabs under the starting position stay level, so the humanoid does not start inside one.")]
+    public float roughAt = -1;
+    [Range(0,.15f)] public float roughHeight = .04f;
+    [Range(0,10)] public float roughTilt = 4f;
     public int shots, impacts, ballsUnderfoot;
     public float lastImpactImpulse, totalImpactImpulse;
     public Material projectileMaterial;
@@ -77,6 +82,21 @@ public class BalanceTestArena : MonoBehaviour
             platforms[i].MoveRotation(floorRotations[i]*Quaternion.Euler(Mathf.Sin(t*.71f+phase)*tiltDegrees*ramp,0,Mathf.Cos(t*.83f+phase)*tiltDegrees*ramp));
         }
     }
+    // The pose the moving floor has at `time`, held still.
+    public void PoseFloor(float time, float amplitude, float tilt)
+    {
+        float t=time*frequency*2*Mathf.PI;
+        Vector3 start=humanoid?humanoid.pelvis.position:Vector3.zero;
+        for(int i=0;i<platforms.Length;i++)
+        {
+            Vector3 p=floorPositions[i];
+            if(Mathf.Abs(p.x-start.x)<.8f && Mathf.Abs(p.z-start.z)<.4f) { platforms[i].position=p; platforms[i].rotation=floorRotations[i]; continue; }
+            float phase=i*1.17f;
+            platforms[i].position=p+Vector3.up*Mathf.Sin(t+phase)*amplitude;
+            platforms[i].rotation=floorRotations[i]*Quaternion.Euler(Mathf.Sin(t*.71f+phase)*tilt,0,Mathf.Cos(t*.83f+phase)*tilt);
+        }
+        Physics.SyncTransforms();
+    }
     public void Fire(int index)
     {
         if(!Application.isPlaying || !humanoid || launchers.Length==0) return;
@@ -129,6 +149,8 @@ public class BalanceTestArena : MonoBehaviour
             b.linearVelocity=Vector3.zero; b.angularVelocity=Vector3.zero; b.WakeUp();
         }
         StopAllCoroutines();
+        // After the humanoid is back at the start, so the level slabs are the ones under it now.
+        if(roughAt>=0) PoseFloor(roughAt,roughHeight,roughTilt);
         humanoid.ResetFeedback(); Physics.SyncTransforms(); clock=0; nextShot=4; shots=impacts=ballsUnderfoot=0; lastImpactImpulse=totalImpactImpulse=0;
     }
     void CreateGuide()
