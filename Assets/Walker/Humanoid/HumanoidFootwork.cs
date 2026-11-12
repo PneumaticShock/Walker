@@ -25,7 +25,7 @@ using UnityEngine;
 //                  the other one back to a normal stance. Then the standing feedback takes over.
 public class HumanoidFootwork : MonoBehaviour
 {
-    public enum Phase { Stand, Prepare, Swing, DoubleSupport, Hold, WeightShift }
+    public enum Phase { Stand, Prepare, Swing, DoubleSupport, Hold, WeightShift, JumpCrouch, JumpPush, Flight }
 
     const float FootHalfWidth=.075f, FootHalfLength=.14f, FootRestHeight=.065f;
     const float HipHalfWidth=.14f, HipDrop=.07f, StandingPelvis=1.005f;
@@ -134,7 +134,7 @@ public class HumanoidFootwork : MonoBehaviour
     [Tooltip("Longest to stay in the pelvis-controlled hold before trying the next thing, in seconds.")]
     [Range(.2f,5)] public float holdLimit = 2.5f;
     [Tooltip("The capture point counts as settled within this distance of the middle of the feet.")]
-    [Range(.01f,.2f)] public float holdCentre = .3f;
+    [Range(.01f,.4f)] public float holdCentre = .3f;
     [Tooltip("The body counts as settled below this speed, in metres per second.")]
     [Range(.01f,.4f)] public float holdSpeed = .1f;
     [Tooltip("Stance width and spread that count as back to normal, in metres.")]
@@ -177,6 +177,74 @@ public class HumanoidFootwork : MonoBehaviour
     [Range(0,1)] public float stepDownLead = .7f;
     [Tooltip("Swing clearance used instead of stepClearance where the ground is uneven: a step between the feet, a tilted slab, or a step under the stance foot. 0 turns this off.")]
     [Range(0,.25f)] public float roughClearance = .13f;
+    [Header("Jumping")]
+    [Tooltip("How high a jump lifts the centre of mass above where it leaves the ground (m).")]
+    [Range(.02f,.4f)] public float jumpHeight = .12f;
+    [Tooltip("How far the pelvis comes down before the push (m).")]
+    [Range(0,.25f)] public float jumpCrouch = .12f;
+    [Range(.1f,1)] public float jumpCrouchTime = .35f;
+    [Tooltip("Shortest hip-to-ankle distance while crouching and pushing (m); standing stepping keeps 0.68.")]
+    [Range(.45f,.75f)] public float jumpShortestLeg = .58f;
+    [Tooltip("How far ahead of the feet the body leans before a moving jump, per m/s of take-off speed (s).")]
+    [Range(0,.4f)] public float jumpLean = .3f;
+    [Tooltip("How far ahead of the pelvis the push leads it, per m/s of speed wanted and of speed lacking (s).")]
+    [Range(0,.3f)] public float jumpLeadTime = .06f;
+    [Tooltip("How far behind the centre of mass the push puts the centre of pressure per m/s the body is slower than its take-off speed (s).")]
+    [Range(0,.5f)] public float jumpSpeedGain = .1f;
+    [Tooltip("How quickly the push takes back the body's spin, by where it puts the centre of pressure (1/s).")]
+    [Range(0,40)] public float jumpSpinGain = 10;
+    [Tooltip("Hip-to-ankle distance a leg reaches for the ground with in the air: a little under straight, ready to give (m).")]
+    [Range(.6f,.8f)] public float jumpLandLeg = .74f;
+    [Tooltip("How far ahead of where the body comes down the feet land, as a share of v/omega.")]
+    [Range(0,1.2f)] public float jumpLandLead = .5f;
+    [Tooltip("How far the pelvis is let down on landing (m).")]
+    [Range(0,.2f)] public float jumpLandAbsorb = .06f;
+    [Tooltip("Total foot load under which the feet have left the ground, and over which a foot has come down (N).")]
+    [Range(5,200)] public float jumpContactLoad = 40;
+    public int jumpsMade, jumpsLanded;
+    // Jump with this horizontal take-off velocity (heading frame, m/s) as soon as both feet are down.
+    public void Jump(Vector3 velocity) { jumpRequested=true; jumpVelocity=new Vector3(velocity.x,0,velocity.z); }
+    public bool JumpPending => jumpRequested;
+    bool jumpRequested, airborne;
+    Vector3 jumpVelocity, jumpFrom, jumpPushFrom;
+    float jumpPushTime, jumpPushRise;
+    [Header("Gait")]
+    [Tooltip("Walking velocity wanted, in the heading frame (x to the right, z forward), m/s. Zero stands still; the recovery steps then bring the body to rest.")]
+    public Vector3 gaitVelocity;
+    [Tooltip("Duration of a walking step (s).")]
+    [Range(.2f,.8f)] public float gaitStepTime = .38f;
+    [Tooltip("Distance between the two feet's tracks (m).")]
+    [Range(.1f,.4f)] public float gaitWidth = .22f;
+    [Tooltip("Shortest time both feet stay down between walking steps (s).")]
+    [Range(0,.2f)] public float gaitDoubleSupport = .04f;
+    [Tooltip("Longest the lean before the first walking step may take (s).")]
+    [Range(.1f,1.5f)] public float gaitLean = .6f;
+    [Tooltip("How quickly the walking velocity actually used follows gaitVelocity (m/s per second).")]
+    [Range(.1f,5)] public float gaitAcceleration = .8f;
+    [Tooltip("Swing clearance of a walking step, over level or uneven ground alike: pathClearance lifts it over raised slabs on the way (m).")]
+    [Range(.02f,.2f)] public float gaitClearance = .06f;
+    [Tooltip("Shape of a walking step's swing height (see swingShape).")]
+    [Range(.4f,1.5f)] public float gaitSwingShape = .7f;
+    [Tooltip("How far the stance ankle moves the centre of pressure per metre of capture point error from the step's planned path (0 turns it off).")]
+    [Range(0,4)] public float gaitCaptureGain = 1.5f;
+    [Tooltip("Most the stance knee bends while walking (degrees).")]
+    [Range(6,60)] public float gaitKneeLimit = 22f;
+    [Tooltip("How much lower a walking step can land without the body coming down for it (m).")]
+    [Range(0,.15f)] public float gaitStepAbsorb = .05f;
+    [Tooltip("A walking step moves its landing off a slab edge when the ground under the footprint differs by more than this (m).")]
+    [Range(.005f,.1f)] public float edgeSpread = .02f;
+    [Tooltip("Longest walking step, from the stance foot forward (m).")]
+    [Range(.2f,1.2f)] public float gaitMaximumStep = .55f;
+    [Tooltip("How much longer the longest step gets per m/s the body is faster than commanded (s).")]
+    [Range(0,2)] public float gaitBrakeStep = .5f;
+    [Tooltip("Longest distance a walking swing may carry the foot (m).")]
+    [Range(.4f,1.4f)] public float gaitMaximumSwing = 1f;
+    [Tooltip("How far the stance ankle moves the centre of pressure per m/s of speed error while walking (m per m/s).")]
+    [Range(0,.5f)] public float gaitSpeedGain = .15f;
+    // The velocity in use, following gaitVelocity at gaitAcceleration.
+    public Vector3 GaitCommand => gaitCommand;
+    public Vector3 GaitPressureWanted => gaitPressureWanted;
+    Vector3 gaitCommand, gaitPressureWanted;
     [Header("Diagnostics")]
     public Phase phase;
     public string state = "Standing";
@@ -185,7 +253,8 @@ public class HumanoidFootwork : MonoBehaviour
     public Vector3 landingTarget, supportPoint, capture;
     public float supportMargin;
 
-    readonly Quaternion[] landingPose = new Quaternion[12];
+    // One per joint motor; sized in GoToStand, since hands and split feet add motors at Awake.
+    Quaternion[] landingPose = new Quaternion[12];
     public readonly Quaternion[] thighs = new Quaternion[2], shins = new Quaternion[2], soles = new Quaternion[2];
     readonly Vector3[] targets = new Vector3[2], normals = new Vector3[2];
     readonly float[] ground = new float[2], unloaded = new float[2];
@@ -206,6 +275,41 @@ public class HumanoidFootwork : MonoBehaviour
 
     [ContextMenu("Request recovery step (Play mode)")]
     public void RequestRecoveryStep() { if(Application.isPlaying) requested=true; }
+    // Put one foot down at a place (world position, the foot's middle), unhurried: the weight goes onto the
+    // other foot first, as for a closing step. For footwork such as a fencing manual's.
+    public void StepTo(int foot, Vector3 place) { placedFoot=foot; placedTarget=place; placedPending=true; }
+    public bool PlacedStepPending => placedPending || phase==Phase.WeightShift || IsSwinging && voluntary;
+    void PlacedStep(JointBalanceHumanoid h, Quaternion heading, Vector3 right)
+    {
+        int foot=placedFoot;
+        BeginStep(h,heading,right,foot,true);
+        Vector3 place=placedTarget;
+        if(FindFoothold(place,heading,1-foot,out var spot)) place=spot;
+        landingTarget=place;
+        PlacedLift(foot,place,out placedGoalPoint);
+        placedPending=false; placedSteps++; placingStep=true;
+    }
+    public int placedSteps;
+    int placedFoot; Vector3 placedTarget, placedGoalPoint; bool placedPending, placingStep, placedLanding;
+    float placedClosest, placedStalled;
+    Vector3 placedPush;
+    public Vector3 PlacedPush => placedPush;
+    float PlacedDuration => stepTime/placedPace;
+    // Where xi should be when `foot` lifts for a step to `place`, and where it should be at touchdown.
+    Vector3 PlacedLift(int foot, Vector3 place, out Vector3 goal)
+    {
+        Vector3 p=Vector3.ProjectOnPlane(targets[1-foot],Vector3.up);
+        goal=Vector3.Lerp(p,Vector3.ProjectOnPlane(place,Vector3.up),placedGoal);
+        return p+(goal-p)*Mathf.Exp(-omega*PlacedDuration);
+    }
+    // During a placed swing: the centre of pressure that brings xi to the goal by the end of the swing.
+    // From xi = p + (xi0 - p) e^(omega tau): p = (xi e^(omega tau) - goal) / (e^(omega tau) - 1), which the
+    // foot then limits. Late in the swing tau is held at a floor, or the gain grows without bound.
+    Vector3 PlacedPressure()
+    {
+        float e=Mathf.Exp(omega*Mathf.Max(.1f,PlacedDuration-timer));
+        return (Vector3.ProjectOnPlane(capture,Vector3.up)*e-placedGoalPoint)/(e-1);
+    }
 
     void Start()
     {
@@ -246,7 +350,8 @@ public class HumanoidFootwork : MonoBehaviour
     // A leg off the ground tracks a foot target from the actual pelvis, like a swing leg.
     // That includes a foot only lightly on the ground: a leg holding the pelvis has no target of
     // its own, so without real load on it there is nothing to stop the foot sliding away.
-    public bool LegIsFree(int leg) => (IsSwinging && leg==steppingFoot) || (phase==Phase.DoubleSupport && !bearing[leg]) || ((phase==Phase.Stand || phase==Phase.Hold) && hanging[leg]);
+    public bool LegIsFree(int leg) => (IsSwinging && leg==steppingFoot) || phase==Phase.Flight || (phase==Phase.DoubleSupport && !bearing[leg]) || ((phase==Phase.Stand || phase==Phase.Hold) && hanging[leg]);
+    public bool Jumping => phase==Phase.JumpCrouch || phase==Phase.JumpPush || phase==Phase.Flight;
     float KneeBend(int leg) => Vector3.Angle(thighBodies[leg].rotation*Vector3.up,shinBodies[leg].rotation*Vector3.up);
     // True whenever the step controller, not the standing feedback, owns the posture.
     public bool IsStepping => phase!=Phase.Stand;
@@ -418,15 +523,56 @@ public class HumanoidFootwork : MonoBehaviour
         {
             Vector3 candidate=swingStart+Vector3.ProjectOnPlane(goal-swingStart,Vector3.up)*scale;
             if(Ground(candidate,heading,out float y,out _) && Mathf.Abs(y-ground[stance])<.15f)
-            { foothold=candidate; foothold.y=y+FootRestHeight; return true; }
+            {
+                foothold=candidate; foothold.y=y+FootRestHeight;
+                if(gaitStep && FootholdRisk(candidate,heading)>edgeSpread) SaferFoothold(heading,stance,ref foothold);
+                return true;
+            }
         }
         return false;
+    }
+    // A walking step has the time to choose a better place nearby than one where the foot would come down
+    // on an edge. Smallest moves first: each centimetre moved is that much error in the step.
+    static readonly Vector2[] edgeShifts={new Vector2(0,.04f),new Vector2(0,-.04f),new Vector2(.04f,0),new Vector2(0,.08f),new Vector2(0,-.08f),new Vector2(.08f,0),new Vector2(0,.12f),new Vector2(0,-.12f),new Vector2(.04f,.06f),new Vector2(.04f,-.06f)};
+    void SaferFoothold(Quaternion heading, int stance, ref Vector3 foothold)
+    {
+        Vector3 forward=heading*Vector3.forward, outward=heading*Vector3.right*(stance==0?1:-1);
+        foreach(var s in edgeShifts)
+        {
+            Vector3 candidate=foothold+outward*s.x+forward*s.y;
+            if(Ground(candidate,heading,out float y,out _) && FootholdRisk(candidate,heading)<=edgeSpread && Mathf.Abs(y-ground[stance])<.15f)
+            { foothold=candidate; foothold.y=y+FootRestHeight; return; }
+        }
+    }
+    // What can go wrong with a foot put down here, as a height (m). A foot whose middle is on one slab while
+    // its heel or toe is over a higher one rests on that edge and tips over it: the risk is how much higher.
+    // The other way round is a foot on a kerb, well supported, as long as most of it is on the slab: with
+    // much of it hanging over, the risk counts as twice edgeSpread. Samples cover the footprint and a little
+    // beyond, where a foot landing a couple of centimetres off target ends up. A single surface is safe however
+    // it is tilted, as the sole is laid on it, and a ray down the gap between slabs, reaching the floor far
+    // below, does not count.
+    float FootholdRisk(Vector3 p, Quaternion heading)
+    {
+        if(!Physics.Raycast(p+Vector3.up*.45f,Vector3.down,out var middle,1.1f,1,QueryTriggerInteraction.Ignore)) return 1;
+        float risk=0; int over=0;
+        for(int i=-1;i<=1;i++) for(int j=-1;j<=1;j++)
+        {
+            if(i==0 && j==0) continue;
+            if(!Physics.Raycast(p+heading*new Vector3(i*.095f,0,j*.175f)+Vector3.up*.45f,Vector3.down,out var hit,1.1f,1,QueryTriggerInteraction.Ignore) || hit.normal.y<.45f) continue;
+            if(hit.collider==middle.collider || middle.point.y-hit.point.y>.2f) continue;
+            if(hit.point.y>middle.point.y) risk=Mathf.Max(risk,hit.point.y-middle.point.y);
+            else if(middle.point.y-hit.point.y>.012f) over++;
+        }
+        if(over>3) risk=Mathf.Max(risk,edgeSpread*2);
+        return risk;
     }
 
     void BeginStep(JointBalanceHumanoid h, Quaternion heading, Vector3 right, int foot, bool isVoluntary)
     {
         steppingFoot=foot; lastFoot=foot; voluntary=isVoluntary; phase=Phase.Swing;
+        gaitStep=!isVoluntary && Walking;
         swingStart=h.feet[foot].position; startHeight=swingStart.y;
+        stancePressure=Load(1-foot)>50?Pressure(1-foot):targets[1-foot];
         kneeTargets[1-foot]=KneeBend(1-foot);
         timer=0; quiet=0; unsafeTicks=0; stepsStarted++; requested=false;
         landingTarget=swingStart;
@@ -434,7 +580,98 @@ public class HumanoidFootwork : MonoBehaviour
     }
 
     Vector3 Plan(JointBalanceHumanoid h, int foot, Quaternion heading, Vector3 right, float remaining) =>
+        gaitStep?PlanGait(h,foot,heading,right,remaining):
         sequence>0 && CapturedBy(h,heading,1-foot)?PlanClosing(h,foot,heading*Vector3.forward,right,1-foot):PlanLanding(h,foot,heading,right,remaining);
+
+    public bool Walking => gaitVelocity.sqrMagnitude>.0025f || gaitCommand.sqrMagnitude>.0025f;
+    public bool GaitStep => gaitStep;
+    // Where the last walking plan wanted the foot before the leg's reach and the stance foot's track limited it.
+    [System.NonSerialized] public Vector3 gaitRawGoal;
+    bool gaitStep;
+
+    // Steady walking at velocity v with step time T, and the centre of pressure on each stance foot in
+    // turn: the capture point leads the stance foot by v T/(e^(omega T)-1) along the way, and lies
+    // W/(e^(omega T)+1) inside it across. So a step lands where the capture point will be at touchdown,
+    // less those offsets for the next stance. Too fast and the next foot lands further ahead, which
+    // slows the body: each step corrects the last.
+    Vector3 GaitOffset(Quaternion heading, int nextStance, out float e)
+    {
+        e=Mathf.Exp(omega*gaitStepTime);
+        Vector3 v=heading*new Vector3(gaitCommand.x,0,gaitCommand.z);
+        float side=nextStance==0?-1:1;
+        return v*gaitStepTime/(e-1)-heading*Vector3.right*(side*gaitWidth/(e+1));
+    }
+    // Land where the capture point will be at touchdown, less the lead it needs over the next stance foot.
+    // (Landing where a recovery step would is not the same: that aims for where the body would come to
+    // rest, about 0.15 m short of the capture point at walking speed, and the body runs away from it.)
+    Vector3 PlanGait(JointBalanceHumanoid h, int foot, Quaternion heading, Vector3 right, float remaining)
+    {
+        int stance=1-foot;
+        // The capture point moves away from the centre of pressure, wherever on the foot the ankle has put
+        // it: from the middle of the foot the prediction runs ahead of where it really goes.
+        Vector3 p=Vector3.ProjectOnPlane(steppingFoot==foot?stancePressure:targets[stance],Vector3.up);
+        Vector3 xi=Vector3.ProjectOnPlane(capture,Vector3.up);
+        Vector3 goal=p+(xi-p)*Mathf.Exp(omega*Mathf.Max(0,remaining))-GaitOffset(heading,foot,out _);
+        gaitRawGoal=goal;
+        // The same reach as a recovery step: from where the hip will be on touchdown.
+        Vector3 hip=ActualHip(h,foot)+comVelocity*(remaining+.03f);
+        Vector3 ankleOffset=heading*AnkleFromFoot;
+        float vertical=Mathf.Max(.60f,hip.y-(ground[stance]+FootRestHeight+AnkleFromFoot.y));
+        float reach=Mathf.Sqrt(Mathf.Max(.0025f,ReachLeg*ReachLeg-vertical*vertical))*landingReach;
+        Vector3 fromHip=Vector3.ClampMagnitude(Vector3.ProjectOnPlane(goal+ankleOffset-hip,Vector3.up),reach);
+        goal=Vector3.ProjectOnPlane(hip,Vector3.up)+fromHip-Vector3.ProjectOnPlane(ankleOffset,Vector3.up);
+        // A walking swing travels from behind the body to ahead of it, about two step lengths.
+        goal=swingStart+Vector3.ClampMagnitude(Vector3.ProjectOnPlane(goal-swingStart,Vector3.up),gaitMaximumSwing);
+        // And no longer a step than walking takes. The swing leg's own speed counts in the body's momentum: a
+        // foot rushed out to catch up pushes the body on through the stance foot, which asks for a longer step
+        // still, until it lands in a split it cannot rise from. Short of that, the next step makes up the rest.
+        // Faster than wanted, a longer step is the brake, and the ankle cannot brake much: it gets longer.
+        Vector3 f=heading*Vector3.forward;
+        float over=Mathf.Max(0,Vector3.Dot(comVelocity,f)-Vector3.Dot(heading*gaitCommand,f));
+        float longest=gaitMaximumStep+over*gaitBrakeStep;
+        float ahead=Vector3.Dot(goal-targets[stance],f);
+        if(ahead>longest) goal-=f*(ahead-longest);
+        // Never across the stance foot's track.
+        float sign=foot==0?-1:1;
+        float gap=Vector3.Dot(goal-targets[stance],right)*sign;
+        if(gap<MinFootGap*.75f) goal+=right*sign*(MinFootGap*.75f-gap);
+        goal.y=ground[stance]+FootRestHeight;
+        return goal;
+    }
+    // The ankle holds the centre of pressure near the middle of the stance foot, nudged back when the
+    // body is slower than commanded and forward when it is faster, never more than the foot allows.
+    Vector3 GaitPressure(Quaternion heading)
+    {
+        int stance=1-steppingFoot;
+        Vector3 error=comVelocity-heading*new Vector3(gaitCommand.x,0,gaitCommand.z);
+        Vector3 offset=Vector3.ClampMagnitude(Vector3.ProjectOnPlane(error,Vector3.up)*gaitSpeedGain,.08f);
+        if(gaitCaptureGain>0)
+        {
+            // Where the capture point should be by now, had the step begun as planned: it leaves the stance
+            // foot from the lead it needs for the next one and moves away exponentially. Any error in it, the
+            // ankle answers by moving the centre of pressure the same way, as far as the foot allows: the
+            // capture point then moves less that way.
+            Vector3 p0=Vector3.ProjectOnPlane(targets[stance],Vector3.up);
+            Vector3 nominal=p0+GaitOffset(heading,stance,out _)*Mathf.Exp(omega*Mathf.Min(timer,gaitStepTime));
+            Vector3 xiError=Vector3.ProjectOnPlane(capture,Vector3.up)-nominal;
+            Vector3 f=heading*Vector3.forward, r=heading*Vector3.right;
+            float along=Mathf.Clamp(Vector3.Dot(xiError,f)*gaitCaptureGain+Vector3.Dot(offset,f),-.07f,.1f);
+            float across=Mathf.Clamp(Vector3.Dot(xiError,r)*gaitCaptureGain+Vector3.Dot(offset,r),-.045f,.045f);
+            offset=f*along+r*across;
+        }
+        Vector3 p=targets[stance]+offset;
+        gaitPressureWanted=p;
+        return p;
+    }
+    Vector3 comVelocity, stancePressure;
+    public Vector3 StancePressure => stancePressure;
+    // The stance foot's centre of pressure as measured, smoothed a little: contact impulses are noisy.
+    void TrackStancePressure(float dt)
+    {
+        if(steppingFoot<0) return;
+        int stance=1-steppingFoot;
+        if(Load(stance)>50) stancePressure=Vector3.Lerp(stancePressure,Pressure(stance),1-Mathf.Exp(-dt/.03f));
+    }
 
     int ChooseFoot(Vector3 mid, Vector3 right)
     {
@@ -460,6 +697,8 @@ public class HumanoidFootwork : MonoBehaviour
     void FinishSwing(bool landed)
     {
         if(landed) stepsLanded++; else stepsCancelled++;
+        placedLanding=placingStep && voluntary;
+        placingStep=false;
         steppedSinceNominal=true; sequence++;
         if(landed && voluntary) closingStepsTaken++;
         steppingFoot=-1; phase=Phase.DoubleSupport; timer=0; quiet=0; unsafeTicks=0; cooldown=.03f; leadLoaded=0;
@@ -469,6 +708,7 @@ public class HumanoidFootwork : MonoBehaviour
     public void Plan(JointBalanceHumanoid h, Quaternion heading, Quaternion upright)
     {
         float dt=Time.fixedDeltaTime;
+        gaitCommand=Vector3.MoveTowards(gaitCommand,gaitVelocity,gaitAcceleration*dt);
         settling=Mathf.Max(0,settling-dt);
         cooldown=Mathf.Max(0,cooldown-dt);
         compression=Mathf.MoveTowards(compression,standingCompression,dt*.035f);
@@ -490,7 +730,7 @@ public class HumanoidFootwork : MonoBehaviour
             // the ground is a runaway: the foot moves, so the leg moves, so the foot moves.
             hanging[i]=unloaded[i]>hangTime;
             bearing[i]=Load(i)>(bearing[i]?60:120);
-            if(smoothLoad[i]>plantLoad || phase==Phase.Swing || phase==Phase.Prepare || phase==Phase.Stand) planted[i]=h.feet[i].position;
+            if(smoothLoad[i]>plantLoad || phase==Phase.Swing || phase==Phase.Prepare || phase==Phase.Stand || phase==Phase.Flight) planted[i]=h.feet[i].position;
             // A foot carrying little has little friction to hold it, so it needs a place of its own to
             // be: its own present position would let it wander with the slightest pull from the leg.
             else { targets[i].x=planted[i].x; targets[i].z=planted[i].z; }
@@ -502,6 +742,7 @@ public class HumanoidFootwork : MonoBehaviour
         omega=Mathf.Sqrt(Physics.gravity.magnitude/Mathf.Max(.5f,h.centerOfMass.y-groundMean));
         // Unfiltered COM velocity: a push changes it instantly, and any lag here multiplies
         // into step error through e^(omega t).
+        comVelocity=Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up);
         capture=h.centerOfMass+Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up)/omega;
         capture.y=mid.y;
         supportMargin=SupportDistance(h,capture,heading,true,true);
@@ -518,8 +759,55 @@ public class HumanoidFootwork : MonoBehaviour
         }
 
         Vector3 servoTarget=mid;
+        // A jump starts from any stance with both feet down and loaded.
+        if(jumpRequested && !fallen && valid && h.elapsed>1.5f && (phase==Phase.Stand || phase==Phase.Hold || phase==Phase.DoubleSupport && timer>landingHold) && Contact(0) && Contact(1) && bearing[0] && bearing[1])
+        {
+            jumpRequested=false; steppingFoot=-1; phase=Phase.JumpCrouch; timer=0;
+            jumpFrom=h.pelvis.position; pelvisHeight=jumpFrom.y;
+        }
         switch(phase)
         {
+            case Phase.JumpCrouch:
+                // Down, and over the feet, or ahead of them for a moving jump: the push then passes the
+                // body's weight through the feet at an angle that sends it that way.
+                state="Jump: crouching";
+                timer+=dt;
+                servoTarget=mid+heading*jumpVelocity*jumpLean;
+                if(timer>=jumpCrouchTime)
+                {
+                    phase=Phase.JumpPush; timer=0; jumpPushFrom=h.pelvis.position;
+                    // Constant acceleration up to the take-off speed for the height wanted, over what the legs
+                    // can still straighten: v = sqrt(2 g h), and the push takes 2 d / v.
+                    float extended=groundMean+FootRestHeight+AnkleFromFoot.y+MaxLeg*.98f+HipDrop;
+                    jumpPushRise=Mathf.Max(.05f,extended-jumpPushFrom.y);
+                    jumpPushTime=2*jumpPushRise/Mathf.Sqrt(2*Physics.gravity.magnitude*jumpHeight);
+                }
+                break;
+            case Phase.JumpPush:
+                state="Jump: pushing";
+                timer+=dt;
+                // The ankles put the centre of pressure behind the capture point for a moving jump, which drives
+                // the body that way; for a jump in place, under it.
+                servoTarget=jumpVelocity.sqrMagnitude>.01f?capture+heading*jumpVelocity:mid;
+                if(timer>.04f && Load(0)+Load(1)<jumpContactLoad) { phase=Phase.Flight; timer=0; jumpsMade++; airborne=Load(0)+Load(1)<jumpContactLoad; }
+                else if(timer>jumpPushTime+.25f) { phase=Phase.Hold; timer=0; quiet=0; pelvisHeight=h.pelvis.position.y; }
+                break;
+            case Phase.Flight:
+                state="Jump: in the air";
+                timer+=dt;
+                // Let go early, the feet are still on the ground for a moment: only a foot that has left it lands.
+                if(Load(0)+Load(1)<jumpContactLoad) airborne=true;
+                int first=Contact(0) && Load(0)>jumpContactLoad?0:Contact(1) && Load(1)>jumpContactLoad?1:-1;
+                if(first>=0 && (airborne && timer>.05f || timer>.15f))
+                {
+                    // Down: double support as after a step, with the height let down for the legs to give.
+                    jumpsLanded++; lastFoot=first; sequence++; steppedSinceNominal=true;
+                    phase=Phase.DoubleSupport; timer=0; quiet=0; unsafeTicks=0; leadLoaded=0; cooldown=.03f;
+                    pelvisHeight=h.pelvis.position.y-jumpLandAbsorb;
+                    for(int i=0;i<2;i++) { kneeTargets[i]=KneeBend(i); bearing[i]=Load(i)>60; }
+                }
+                else if(timer>2) { phase=Phase.Hold; timer=0; quiet=0; pelvisHeight=h.pelvis.position.y; }
+                break;
             case Phase.Stand:
                 state=fallen?"Fallen":settling>0?"Settling":"Terrain stance";
                 bool nominal=StanceIsNominal(forward,right);
@@ -535,6 +823,19 @@ public class HumanoidFootwork : MonoBehaviour
                 bool outside=nominal?beyondLimit>=2:supportMargin>stepAgainMargin && unsafeTicks>=2;
                 float standSpeed=Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up).magnitude;
                 quiet=!unsafePoint && standSpeed<.12f ? quiet+dt : 0;
+                if(canStep && placedPending && !fallen && settling<=0 && Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up).magnitude<placedStartSpeed)
+                {
+                    // A step to a given place: the weight part way across first (see WeightShift).
+                    pelvisHeight=h.pelvis.position.y; stayFoot=1-placedFoot; phase=Phase.WeightShift; timer=0;
+                    break;
+                }
+                if(canStep && Walking && !fallen && settling<=0)
+                {
+                    // Set off: shift onto one foot, then step with the other.
+                    pelvisHeight=h.pelvis.position.y;
+                    preparingFoot=ChooseFoot(mid,right); phase=Phase.Prepare; timer=0;
+                    break;
+                }
                 if(canStep && (outside || requested))
                 {
                     pelvisHeight=h.pelvis.position.y;
@@ -551,6 +852,24 @@ public class HumanoidFootwork : MonoBehaviour
                 state="Preparing step";
                 timer+=dt;
                 servoTarget=targets[1-preparingFoot];
+                if(Walking)
+                {
+                    // Setting off, as people do: the centre of pressure moves back and towards the stance
+                    // side, which tips the body forward over the stance foot. Lift once the capture point
+                    // leads it by what steady walking needs; the first step then lands ahead.
+                    int stanceFoot=1-preparingFoot;
+                    // From the speed wanted, not the one in use: that is still ramping up from nothing.
+                    Vector3 inUse=gaitCommand; gaitCommand=gaitVelocity;
+                    Vector3 lead=GaitOffset(heading,stanceFoot,out _);
+                    gaitCommand=inUse;
+                    servoTarget=targets[stanceFoot]+lead;
+                    Vector3 way=Vector3.ProjectOnPlane(heading*new Vector3(gaitVelocity.x,0,gaitVelocity.z),Vector3.up).normalized;
+                    if(lead.sqrMagnitude<.0001f) lead=way*.02f;
+                    bool over=Mathf.Abs(Vector3.Dot(capture-servoTarget,right))<shiftLift;
+                    bool leading=Vector3.Dot(capture-targets[stanceFoot],way)>=.7f*Vector3.Dot(lead,way);
+                    if(over && leading || timer>gaitLean) BeginStep(h,heading,right,preparingFoot,false);
+                    break;
+                }
                 if(Mathf.Abs(Vector3.Dot(capture-servoTarget,right))<shiftLift || timer>shiftTime)
                     BeginStep(h,heading,right,preparingFoot,false);
                 break;
@@ -563,8 +882,19 @@ public class HumanoidFootwork : MonoBehaviour
                 // on the ground to push against: the swing leg's reaction slides the foot back.
                 leadLoaded=Contact(lastFoot) && Load(lastFoot)>leadLoad ? leadLoaded+dt : 0;
                 if(timer<landingHold) break;
+                if(Walking && canStep)
+                {
+                    // Walking: the trailing foot goes as soon as the new one carries the body.
+                    servoTarget=targets[lastFoot];
+                    if(timer>=gaitDoubleSupport && Contact(lastFoot) && (leadLoaded>=leadLoadTime || timer>leadLoadLimit)) BeginStep(h,heading,right,1-lastFoot,false);
+                    break;
+                }
                 bool comfortable=StanceIsAcceptable(forward,right);
                 bool stepNeeded=supportMargin>stepAgainMargin && unsafeTicks>=2;
+                // A placed step lands in the stance it was asked for, however long: not one to close up by
+                // drawing the body onto the new foot and bringing the other after it. The body stays on its way
+                // to the middle of that stance.
+                if(placedLanding) { comfortable=true; servoTarget=placedGoalPoint; }
                 Vector3 feetAxis=Vector3.ProjectOnPlane(targets[lastFoot]-targets[1-lastFoot],Vector3.up).normalized;
                 bool reached=Vector3.Dot(capture-targets[lastFoot],feetAxis)>-closeMargin;
                 // Keep going while there is momentum to use: wait for it to bring xi up to the
@@ -584,10 +914,24 @@ public class HumanoidFootwork : MonoBehaviour
                 // it is what the body needs before the standing law or a closing step can follow.
                 state="Holding stance";
                 timer+=dt;
+                if(canStep && Walking)
+                {
+                    preparingFoot=FootToMove(mid,right); phase=Phase.Prepare; timer=0;
+                    break;
+                }
                 if(canStep && supportMargin>stepAgainMargin && unsafeTicks>=2)
                 {
                     int foot=FootToMove(mid,right);
                     if(Contact(1-foot)) BeginStep(h,heading,right,foot,false);
+                    break;
+                }
+                // The next placed step once the body has stopped: shifting off a body still moving, the shift
+                // starts from wherever the momentum takes xi.
+                if(canStep && placedPending)
+                {
+                    // Not into the standing law meanwhile: the switch of controller throws the body about just
+                    // as the shift begins.
+                    if(bearing[0] && bearing[1] && timer>.2f && (Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up).magnitude<placedStartSpeed || timer>1.5f)) { stayFoot=1-placedFoot; phase=Phase.WeightShift; timer=0; }
                     break;
                 }
                 float holdFlatSpeed=Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up).magnitude;
@@ -595,6 +939,8 @@ public class HumanoidFootwork : MonoBehaviour
                 quiet=calm?quiet+dt:0;
                 bool normal=StanceIsNormal(forward,right);
                 if(holdOnly) break;
+                // A meant stance goes straight to the standing law: the hold lets a body over its front foot creep on.
+                if(heldStanceSpread>0 && normal && bearing[0] && bearing[1] && timer>.15f) { GoToStand(h); break; }
                 if(normal && (quiet>quietTime || timer>holdLimit)) GoToStand(h);
                 else if(!normal && closingSteps && canStep && (quiet>quietTime || timer>holdLimit))
                 {
@@ -609,6 +955,21 @@ public class HumanoidFootwork : MonoBehaviour
                 timer+=dt;
                 servoTarget=targets[stayFoot];
                 if(supportMargin>stepAgainMargin && unsafeTicks>=2) { phase=Phase.Hold; timer=0; quiet=0; break; }
+                // A placed step lifts with xi where, running away from the stay foot as e^(omega t) for the swing,
+                // it reaches the middle of the new stance just as the foot lands: the body then comes to rest over
+                // both feet. Short of that, it is still on its way back to the stay foot at touchdown; past it, it
+                // runs on beyond the landing foot. Measured as a point, not a share of the way between the feet:
+                // in a long diagonal stance such as a fencing guard the body is well off that line.
+                if(placedPending && canStep)
+                {
+                    Vector3 lift=PlacedLift(placedFoot,placedTarget,out _);
+                    servoTarget=lift;
+                    float error=Vector3.ProjectOnPlane(capture-lift,Vector3.up).magnitude;
+                    // The closest it has come; a shift that has made no headway for a while has gone as far as it goes.
+                    if(timer<dt*1.5f || error<placedClosest-.005f) { placedClosest=error; placedStalled=0; } else placedStalled+=dt;
+                    if(error<placedLiftError || placedStalled>.3f && error<placedStallError || timer>2f) PlacedStep(h,heading,right);
+                    break;
+                }
                 // Lift as soon as xi is over the stay foot. The COM need not be there yet:
                 // its remaining momentum carries it over without loading the knee.
                 if(canStep && SupportDistance(h,capture,heading,stayFoot==0,stayFoot==1)<liftMargin)
@@ -619,6 +980,7 @@ public class HumanoidFootwork : MonoBehaviour
                     // centred on where the body is, or the next thing it would need is another step.
                     float closeAlong=Mathf.Clamp(2*Vector3.Dot(Vector3.ProjectOnPlane(Vector3.Lerp(h.centerOfMass,capture,closeBlend)-targets[stayFoot],Vector3.up),forward),-closeSpread,closeSpread);
                     Vector3 closed=targets[stayFoot]+right*(foot==1?NominalWidth:-NominalWidth)+forward*closeAlong;
+                    if(placedPending && placedFoot==foot) { closed=placedTarget; placedPending=false; placedSteps++; placingStep=true; }
                     if(FindFoothold(closed,heading,stayFoot,out var closedSpot)) closed=closedSpot;
                     landingTarget=closed;
                 }
@@ -629,9 +991,12 @@ public class HumanoidFootwork : MonoBehaviour
         if(phase==Phase.Swing)
         {
             int i=steppingFoot, stance=1-i;
+            TrackStancePressure(dt);
             // A disturbance during an unhurried step turns it into a real recovery step.
-            if(voluntary && SupportDistance(h,capture,heading,i!=0,i!=1)>.04f) voluntary=false;
-            float duration=voluntary?stepTime/closingPace:stepTime;
+            // A placed step starts from both feet, with xi between them and so well off the stance foot: only a
+            // real fall makes it a recovery step.
+            if(voluntary && SupportDistance(h,capture,heading,i!=0,i!=1)>(placingStep?.25f:.04f)) { voluntary=false; placingStep=false; }
+            float duration=gaitStep?gaitStepTime:voluntary?stepTime/(placingStep?placedPace:closingPace):stepTime;
             timer+=dt;
             float progress=Mathf.Clamp01(timer/duration);
             // Stop replanning just before arrival so that it has a fixed place to come down on.
@@ -643,8 +1008,9 @@ public class HumanoidFootwork : MonoBehaviour
             Vector3 p=Vector3.Lerp(swingStart,landingTarget,travel);
             // Level ground keeps the clearance it was tuned with; uneven ground gets more.
             bool uneven=Mathf.Abs(landingTarget.y-startHeight)>.01f || Vector3.Angle(normals[stance],Vector3.up)>1 || footSpread[stance]>.01f;
-            float clearance=roughClearance>0 && uneven?roughClearance:stepClearance;
-            p.y=Mathf.Lerp(startHeight,landingTarget.y,travel)+clearance*Mathf.Sin(Mathf.PI*Mathf.Pow(progress,swingShape));
+            float clearance=gaitStep?gaitClearance:roughClearance>0 && uneven?roughClearance:stepClearance;
+            // A walking foot peaks early and comes down slowly, so that the knee has straightened by touchdown.
+            p.y=Mathf.Lerp(startHeight,landingTarget.y,travel)+clearance*Mathf.Sin(Mathf.PI*Mathf.Pow(progress,gaitStep?gaitSwingShape:swingShape));
             if(pathClearance>0 && progress<.85f)
             {
                 // A straight line to the landing can run into a raised slab on the way there.
@@ -659,8 +1025,11 @@ public class HumanoidFootwork : MonoBehaviour
             // trajectory, keep reaching down until the sole actually lands.
             if(timer>duration) p.y-=Mathf.Min(.10f,(timer-duration)*.7f);
             targets[i]=p;
-            servoTarget=targets[stance];
-            state=voluntary?"Closing step":"Recovery step";
+            // The stance ankle draws xi towards the stance foot, which a recovery step wants. A placed step lands
+            // into a stance of its own: drawn onto the stance foot instead, xi is past where both feet together
+            // can bring it back once the other one is down.
+            servoTarget=placingStep?placedGoalPoint:targets[stance];
+            state=gaitStep?"Walking":voluntary?"Closing step":"Recovery step";
             // A toe scuff on the way out is not a landing. Real load is, wherever the foot is:
             // the body has come down on it, and dragging it onward would only trip.
             bool touched=timer>.08f && Contact(i) && (progress>touchdownProgress && Load(i)>5 || progress>.4f && Load(i)>scuffLoad) && h.feet[i].position.y-ground[i]<.11f;
@@ -670,11 +1039,13 @@ public class HumanoidFootwork : MonoBehaviour
         supportPoint=phase==Phase.Stand?Vector3.Lerp(supportPoint,mid,1-Mathf.Exp(-8*dt)):servoTarget;
 
         if(phase==Phase.Stand) PoseStanding(h,heading,upright,forward,right,mid);
+        else if(phase==Phase.Flight) PoseFlight(h,heading,forward);
         else { PoseStepping(h,heading,forward,servoTarget,dt); PlaceCentreOfPressure(h,heading,servoTarget); }
     }
 
     void GoToStand(JointBalanceHumanoid h)
     {
+        if(landingPose.Length!=h.motors.Length) landingPose=new Quaternion[h.motors.Length];
         for(int j=0;j<h.motors.Length;j++)
         {
             // A planted ankle's target sits well past the foot, to set its torque. Blending from there
@@ -694,8 +1065,29 @@ public class HumanoidFootwork : MonoBehaviour
     {
         Vector3 between=targets[1]-targets[0];
         float width=Vector3.Dot(between,right), spread=Mathf.Abs(Vector3.Dot(between,forward));
-        return spread<normalSpread && width>normalMinWidth && width<normalMaxWidth;
+        return spread<Mathf.Max(normalSpread,heldStanceSpread) && width>(heldStanceSpread>0?.12f:normalMinWidth) && width<(heldStanceSpread>0?Mathf.Max(normalMaxWidth,heldStanceWidth):normalMaxWidth);
     }
+    [Tooltip("A stance that is meant, such as a fencing guard, may be this long front to back and still count as normal, so the standing law holds it rather than the hold, which lets a body leaning over its front foot creep on (m). 0 keeps the normal limits.")]
+    [Range(0,.5f)] public float heldStanceSpread = 0;
+    [Tooltip("Where a placed step aims to have the capture point when it lands: 0 over the stay foot, 1 over the landing foot.")]
+    [Range(0,1)] public float placedGoal = .5f;
+    [Tooltip("How close the capture point must come to its lift point before a placed step's foot lifts (m).")]
+    [Range(.005f,.1f)] public float placedLiftError = .02f;
+    [Tooltip("Smallest share of the load the foot a placed step will lift is asked to keep while the weight shifts.")]
+    [Range(0,.45f)] public float placedShareMargin = .03f;
+    [Tooltip("A placed step's shift that has stopped closing on its lift point lifts anyway within this distance of it (m).")]
+    [Range(0,.15f)] public float placedStallError = .05f;
+    [Tooltip("Integral gain of a placed step's weight shift (1/s), and the most it may add to the pelvis command (m).")]
+    [Range(0,5)] public float placedIntegral = 1f;
+    [Range(0,.2f)] public float placedPushLimit = .1f;
+    [Tooltip("A placed step waits in the hold until the body is slower than this (m/s), for at most 1.5 s.")]
+    [Range(.02f,.5f)] public float placedStartSpeed = .08f;
+    [Tooltip("With a meant stance (heldStanceSpread above 0), the widest stance the standing law still holds (m): footwork such as a fencer's passes through wide stances on its way round.")]
+    [Range(.3f,.7f)] public float heldStanceWidth = .56f;
+    [Tooltip("How fast a placed step's weight shift is, as a share of a closing step's.")]
+    [Range(.1f,1)] public float placedShift = 1f;
+    [Tooltip("How brisk a placed step's swing is, as a share of a recovery step's pace (closing steps use closingPace). An unhurried swing over a long step leaves the body time to sink and tip off the stay foot.")]
+    [Range(.2f,1.5f)] public float placedPace = 1f;
     bool StanceIsNominal(Vector3 forward, Vector3 right)
     {
         Vector3 between=targets[1]-targets[0];
@@ -726,7 +1118,15 @@ public class HumanoidFootwork : MonoBehaviour
             Vector3 stanceHip=ActualHip(h,stance);
             float wantPelvis=ground[stance]+stanceHeight;
             bool lowering=false;
-            if(stepDownLead>0)
+            if(gaitStep)
+            {
+                // Walking over uneven ground, the swing leg takes up a few centimetres of height difference by
+                // itself. Lowering the body for them bends a nearly straight stance knee a long way, and the
+                // stance foot comes unloaded and slides; raising it for a step up has the leg push off.
+                float drop=ground[stance]-(landingTarget.y-FootRestHeight)-gaitStepAbsorb;
+                if(drop>0) { wantPelvis-=drop*Mathf.Clamp01(SwingProgress/stepDownLead); lowering=true; }
+            }
+            else if(stepDownLead>0)
             {
                 // Going down a step, the leg can only reach once the body has come down with it. Going
                 // up, there is nothing to gain from a stance knee that is not as straight as it goes.
@@ -743,7 +1143,10 @@ public class HumanoidFootwork : MonoBehaviour
             float kneeForHeight=2*Mathf.Acos(Mathf.Clamp(span/.8f,0,1))*Mathf.Rad2Deg;
             // Falling behind the foot, the ground force passes behind the knee and a bent knee folds.
             bool behind=Vector3.Dot(capture-stanceAnkle,forward)<0;
-            HoldKnee(stance,behind && !lowering?stanceKnee:Mathf.Clamp(kneeForHeight,stanceKnee,70),heading,dt);
+            // Walking, the stance leg vaults the body over a nearly straight knee, which lets the pelvis rise
+            // and fall a few centimetres. Holding the height level instead bends the knee while the foot is
+            // still ahead, just as it takes the whole weight, and past about 40 degrees the cap cannot hold it.
+            HoldKnee(stance,behind && !lowering?stanceKnee:Mathf.Clamp(kneeForHeight,stanceKnee,gaitStep?gaitKneeLimit:70),heading,dt);
             float bend=SolveLeg(swing,ActualHip(h,swing),targets[swing]+soles[swing]*AnkleFromFoot,forward,MinSwingLeg);
             leftKneeDegrees=swing==0?bend:kneeTargets[stance]; rightKneeDegrees=swing==1?bend:kneeTargets[stance];
             pelvisHeight=h.pelvis.position.y;
@@ -753,7 +1156,17 @@ public class HumanoidFootwork : MonoBehaviour
         // feet actually landed, and the servo moves the pelvis towards where it should be.
         Vector3 command=h.pelvis.position;
         // The shift before a closing step is voluntary, so there is no reason for it to be violent.
-        command+=Vector3.ClampMagnitude(Vector3.ProjectOnPlane(servoTarget-capture,Vector3.up)*servoGain,servoLimit*(phase==Phase.WeightShift?closingShift:1));
+        // A placed step's shift slower still: its swing is unhurried, and the momentum of a quick shift
+        // carries the body on out past the stay foot while the other is in the air.
+        command+=Vector3.ClampMagnitude(Vector3.ProjectOnPlane(servoTarget-capture,Vector3.up)*servoGain,servoLimit*(phase==Phase.WeightShift?closingShift*(placedPending?placedShift:1):1));
+        // That alone stalls a long way short in a wide stance: the legs give under the offset it asks for. A
+        // placed step has to have xi at its lift point, so its shift integrates what is left.
+        if(phase==Phase.WeightShift && placedPending)
+        {
+            placedPush=Vector3.ClampMagnitude(placedPush+Vector3.ProjectOnPlane(servoTarget-capture,Vector3.up)*(placedIntegral*dt),placedPushLimit);
+            command+=placedPush;
+        }
+        else placedPush=Vector3.zero;
         // Stand as tall as both legs can reach. Never go so low that the nearer leg bends past
         // what the knee's torque cap can hold: the further leg's heel rises instead.
         float reachable=float.PositiveInfinity, lowest=float.NegativeInfinity;
@@ -772,15 +1185,35 @@ public class HumanoidFootwork : MonoBehaviour
         // stance foot when the other one lifts, and it would then land on that knee and fold it.
         float groundMean=(ground[0]+ground[1])*.5f;
         float tall=phase==Phase.Hold?StandingPelvis-compression:stanceHeight;
-        if(phase!=Phase.Prepare) pelvisHeight=Mathf.MoveTowards(pelvisHeight,Mathf.Max(Mathf.Min(reachable,groundMean+tall),lowest),dt*riseRate);
+        // Between walking steps too: the next lift comes within a few hundredths of a second, and rising into
+        // it leaves the stance foot unloaded, sliding, as the swing begins. Only come up from too low.
+        if(phase==Phase.JumpCrouch) pelvisHeight=jumpFrom.y-jumpCrouch*Mathf.SmoothStep(0,1,timer/jumpCrouchTime);
+        else if(phase==Phase.JumpPush)
+        {
+            // Constant acceleration to the take-off speed, then on up: the legs straighten to their limit.
+            float s=Mathf.Min(timer,jumpPushTime), past=Mathf.Max(0,timer-jumpPushTime);
+            pelvisHeight=jumpPushFrom.y+jumpPushRise*(s/jumpPushTime)*(s/jumpPushTime)+2*jumpPushRise/jumpPushTime*past;
+            // Across the ground the push follows a speed: up to the take-off speed by the end (none for a jump in
+            // place). The pelvis is led ahead of where it is by that, and by what the body still lacks of it.
+            Vector3 wantedSpeed=heading*jumpVelocity*Mathf.Clamp01(timer/jumpPushTime);
+            Vector3 lacking=wantedSpeed-Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up);
+            Vector3 flat=Vector3.ProjectOnPlane(h.pelvis.position,Vector3.up)+(wantedSpeed+lacking)*jumpLeadTime;
+            command.x=flat.x; command.z=flat.z;
+        }
+        else if(Walking && phase==Phase.DoubleSupport) pelvisHeight=Mathf.Max(h.pelvis.position.y,Mathf.MoveTowards(pelvisHeight,lowest,dt*riseRate));
+        else if(phase!=Phase.Prepare) pelvisHeight=Mathf.MoveTowards(pelvisHeight,Mathf.Max(Mathf.Min(reachable,groundMean+tall),lowest),dt*riseRate);
         // Damp the height as well as setting it. Stiff legs catching a falling body otherwise throw it
         // back up clear of the ground, and a foot in the air has nothing to hold it in place.
-        command.y=pelvisHeight-h.pelvis.linearVelocity.y*heightDamping;
+        // Except in a push, where the rise is the point.
+        command.y=phase==Phase.JumpPush?pelvisHeight:pelvisHeight-h.pelvis.linearVelocity.y*heightDamping;
         // Share the load so that the two feet together put the centre of pressure where it is wanted.
         Vector3 wantedPressure=capture+Vector3.ProjectOnPlane(capture-servoTarget,Vector3.up)*copGain;
         Vector3 between=Vector3.ProjectOnPlane(targets[1]-targets[0],Vector3.up);
         // Both feet keep some load: an unloaded foot would be lifted clear by the length difference.
-        float share=Mathf.Clamp(Vector3.Dot(wantedPressure-targets[0],between)/Mathf.Max(.01f,between.sqrMagnitude),loadShareMargin,1-loadShareMargin);
+        // Except the foot a placed step is about to lift: in a long stance the margin keeps xi far from the
+        // stay foot, short of where it must be when the foot goes.
+        float margin=phase==Phase.WeightShift && placedPending?placedShareMargin:loadShareMargin;
+        float share=Mathf.Clamp(Vector3.Dot(wantedPressure-targets[0],between)/Mathf.Max(.01f,between.sqrMagnitude),margin,1-margin);
         float total=Load(0)+Load(1);
         loadDifference=Mathf.Lerp(loadDifference,Load(1)-Load(0),1-Mathf.Exp(-dt/.03f));
         legDifference+=dt*(loadShareGain*((2*share-1)*total-loadDifference)-legDifference/loadShareLeak);
@@ -809,10 +1242,51 @@ public class HumanoidFootwork : MonoBehaviour
                 float pushing=LegPush(i);
                 Vector3 actual=h.pelvis.position+heading*new Vector3(i==0?-HipHalfWidth:HipHalfWidth,-HipDrop,0);
                 hip.x=Mathf.Lerp(actual.x,hip.x,pushing); hip.z=Mathf.Lerp(actual.z,hip.z,pushing);
-                bend=SolveLeg(i,hip,ankle,forward,MinStanceLeg);
+                bend=SolveLeg(i,hip,ankle,forward,Jumping?jumpShortestLeg:MinStanceLeg);
             }
             if(i==0) leftKneeDegrees=bend; else rightKneeDegrees=bend;
         }
+    }
+
+    // Pushing off, the ground force is more than the body's weight, and wherever it misses the centre of mass
+    // it spins the body, which then turns all through the flight (in place, the standing law put it 5-12 cm
+    // behind and the body landed pitched 45 degrees forward). So the centre of pressure goes under the centre
+    // of mass, moved by what turns the spin already gained back: the moment of a vertical force F at offset d
+    // is (-d.z F, 0, d.x F), and that is set to -k L.
+    // Across the ground, the body speeds up away from the centre of pressure: slower than the take-off speed,
+    // it goes behind the centre of mass by jumpSpeedGain per m/s lacking.
+    Vector3 JumpPressure(JointBalanceHumanoid h, Quaternion heading)
+    {
+        float force=Mathf.Max(300,Load(0)+Load(1));
+        Vector3 spin=h.angularMomentum;
+        Vector3 lacking=heading*jumpVelocity-Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up);
+        return Vector3.ProjectOnPlane(h.centerOfMass,Vector3.up)-lacking*jumpSpeedGain+new Vector3(-spin.z,0,spin.x)*(jumpSpinGain/force);
+    }
+
+    // In the air: each leg reaches, a little bent, for where its foot should come down. That is beside
+    // where the centre of mass will be on landing, a share of v/omega further on, so that the capture
+    // point lands between the feet and the legs can take the body to rest. Nothing else can be done up
+    // here: with no ground, any torque only turns one part against another.
+    void PoseFlight(JointBalanceHumanoid h, Quaternion heading, Vector3 forward)
+    {
+        float g=Physics.gravity.magnitude, groundMean=(ground[0]+ground[1])*.5f;
+        float landHeight=StandingPelvis-.08f;
+        float drop=Mathf.Max(0,h.centerOfMass.y-(groundMean+landHeight)), vy=h.centerOfMassVelocity.y;
+        float t=(vy+Mathf.Sqrt(vy*vy+2*g*drop))/g;
+        Vector3 vh=Vector3.ProjectOnPlane(h.centerOfMassVelocity,Vector3.up);
+        Vector3 landing=Vector3.ProjectOnPlane(h.centerOfMass,Vector3.up)+vh*t+vh/Mathf.Sqrt(g/landHeight)*jumpLandLead;
+        for(int i=0;i<2;i++)
+        {
+            Vector3 spot=landing+heading*Vector3.right*(i==0?-HipHalfWidth:HipHalfWidth);
+            if(Ground(spot,heading,out float y,out var n)) { spot.y=y+FootRestHeight; soles[i]=Quaternion.FromToRotation(Vector3.up,n)*heading; }
+            else { spot.y=groundMean+FootRestHeight; soles[i]=heading; }
+            Vector3 hip=ActualHip(h,i);
+            Vector3 reach=Vector3.ClampMagnitude(spot+soles[i]*AnkleFromFoot-hip,jumpLandLeg);
+            targets[i]=hip+reach-soles[i]*AnkleFromFoot;
+            float bend=SolveLeg(i,hip,hip+reach,forward,MinSwingLeg);
+            if(i==0) leftKneeDegrees=bend; else rightKneeDegrees=bend;
+        }
+        pelvisHeight=h.pelvis.position.y;
     }
 
     void HoldKnee(int leg, float wanted, Quaternion heading, float dt)
@@ -830,7 +1304,7 @@ public class HumanoidFootwork : MonoBehaviour
     {
         // Pressing beyond xi drives it back towards the target (the divergent component of
         // motion moves away from the centre of pressure).
-        Vector3 wanted=capture+Vector3.ProjectOnPlane(capture-servoTarget,Vector3.up)*(steppingFoot>=0?singleSupportGain:copGain);
+        Vector3 wanted=phase==Phase.JumpPush?JumpPressure(h,heading):gaitStep && steppingFoot>=0?GaitPressure(heading):placingStep && steppingFoot>=0?PlacedPressure():capture+Vector3.ProjectOnPlane(capture-servoTarget,Vector3.up)*(steppingFoot>=0?singleSupportGain:copGain);
         float weight=Physics.gravity.magnitude*totalMass;
         for(int i=0;i<2;i++)
         {
@@ -957,6 +1431,7 @@ public class HumanoidFootwork : MonoBehaviour
         unloaded[0]=unloaded[1]=0; bumpless=steppedSinceNominal=false; legDifference=loadDifference=0;
         for(int i=0;i<2;i++) kneeOffset[i]=pitchOffset[i]=rollOffset[i]=0;
         stepsStarted=stepsLanded=stepsCancelled=closingStepsTaken=0; state="Standing"; requested=voluntary=false;
+        jumpRequested=false; jumpsMade=jumpsLanded=0; placedPending=false; placedSteps=0;
     }
     public Quaternion BlendLandingTarget(int motor, Quaternion target)
     {
@@ -968,6 +1443,8 @@ public class HumanoidFootwork : MonoBehaviour
     {
         if(phase==Phase.Stand) return settling>0?240f:90f;
         if(!legJoint) return 240f;
+        // A push straightens the knees by some 60 degrees in a fifth of a second.
+        if(Jumping) return 1200f;
         return leg==steppingFoot && !voluntary ? 1200f : 360f;
     }
 }
